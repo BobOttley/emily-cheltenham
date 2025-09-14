@@ -8,7 +8,7 @@
 console.log("✅ PEN.ai self-injecting script.js loaded");
 
 // === 0) Config: set your chatbot backend origin here (or window.PENAI_CHATBOT_ORIGIN) ===
-const CHATBOT_ORIGIN = window.PENAI_CHATBOT_ORIGIN || "https://emily-more-house.onrender.com";
+const CHATBOT_ORIGIN = window.PENAI_CHATBOT_ORIGIN || "http://localhost:5001";
 
 // === 1) Fetch shim: route same-origin paths to chatbot backend when site + bot are separate ===
 (function () {
@@ -193,20 +193,27 @@ document.addEventListener("DOMContentLoaded", () => {
   let currentLanguage = languageSelector.value;
 
   const UI_TEXT = {
-    en: { welcome: "Hi there! Ask me anything about More House School.", placeholder: "Type your question…", enquire: "Enquire now" },
-    fr: { welcome: "Bonjour ! Posez-moi vos questions sur More House School.", placeholder: "Tapez votre question…", enquire: "Faire une demande" },
-    es: { welcome: "¡Hola! Pregúntame lo que quieras sobre More House School.", placeholder: "Escribe tu pregunta…", enquire: "Consultar ahora" },
-    de: { welcome: "Hallo! Fragen Sie mich alles über die More House School.", placeholder: "Geben Sie Ihre Frage ein…", enquire: "Jetzt anfragen" },
-    zh: { welcome: "您好！欢迎咨询 More House School。", placeholder: "请输入问题…", enquire: "现在咨询" }
+    en: { welcome: "Hi there! Ask me anything about Cheltenham College.", placeholder: "Type your question…", enquire: "Enquire now" },
+    fr: { welcome: "Bonjour ! Posez-moi vos questions sur Cheltenham College.", placeholder: "Tapez votre question…", enquire: "Faire une demande" },
+    es: { welcome: "¡Hola! Pregúntame lo que quieras sobre Cheltenham College.", placeholder: "Escribe tu pregunta…", enquire: "Consultar ahora" },
+    de: { welcome: "Hallo! Fragen Sie mich alles über Cheltenham College.", placeholder: "Geben Sie Ihre Frage ein…", enquire: "Jetzt anfragen" },
+    zh: { welcome: "您好！欢迎咨询 Cheltenham College。", placeholder: "请输入问题…", enquire: "现在咨询" },
+    it: { welcome: "Ciao! Chiedimi qualsiasi cosa su Cheltenham College.", placeholder: "Scrivi la tua domanda…", enquire: "Richiedi informazioni" },
+    ar: { welcome: "مرحبًا! اسألني أي شيء عن Cheltenham College.", placeholder: "اكتب سؤالك…", enquire: "أرسل استفسارًا" },
+    ru: { welcome: "Здравствуйте! Задайте мне любой вопрос о Cheltenham College.", placeholder: "Введите ваш вопрос…", enquire: "Оставить заявку" }
   };
-
+  
   const LABELS = {
     en: { fees: "Fees", admissions: "Admissions", contact: "Contact", open: "Open Events", enquire: UI_TEXT.en.enquire, prospectus: "Tailored Prospectus" },
     fr: { fees: "Frais", admissions: "Admissions", contact: "Contact", open: "Portes ouvertes", enquire: UI_TEXT.fr.enquire, prospectus: "Prospectus personnalisé" },
-    es: { fees: "Tasas", admissions: "Admisiones", contact: "Contacto", open: "Jornadas abiertas", enquire: UI_TEXT.es.enquire, prospectus: "Prospecto personal" },
+    es: { fees: "Tasas", admissions: "Admisiones", contact: "Contacto", open: "Jornadas abiertas", enquire: UI_TEXT.es.enquire, prospectus: "Prospecto personalizado" },
     de: { fees: "Gebühren", admissions: "Aufnahme", contact: "Kontakt", open: "Tage der offenen Tür", enquire: UI_TEXT.de.enquire, prospectus: "Individuelles Prospekt" },
-    zh: { fees: "学费", admissions: "招生", contact: "联系方式", open: "开放日", enquire: UI_TEXT.zh.enquire, prospectus: "定制版招生简章" }
+    zh: { fees: "学费", admissions: "招生", contact: "联系方式", open: "开放日", enquire: UI_TEXT.zh.enquire, prospectus: "定制版招生简章" },
+    it: { fees: "Rette", admissions: "Ammissioni", contact: "Contatti", open: "Open Day", enquire: UI_TEXT.it.enquire, prospectus: "Prospetto personalizzato" },
+    ar: { fees: "الرسوم", admissions: "القبول", contact: "التواصل", open: "الأيام المفتوحة", enquire: UI_TEXT.ar.enquire, prospectus: "كتيّب مخصص" },
+    ru: { fees: "Стоимость обучения", admissions: "Поступление", contact: "Контакты", open: "Дни открытых дверей", enquire: UI_TEXT.ru.enquire, prospectus: "Индивидуальный проспект" }
   };
+  
 
   function clearButtons(){ buttonGrid.innerHTML = ""; }
   function getTranslatedLabel(k){ return LABELS[currentLanguage]?.[k] || k; }

@@ -4,6 +4,7 @@
 import os
 import re
 import json
+import numpy as np
 import uuid
 import pickle
 import hashlib
@@ -11,7 +12,6 @@ import difflib
 from datetime import datetime, date
 from typing import Optional, Dict, Any, List
 
-import numpy as np
 import requests
 from bs4 import BeautifulSoup
 from dateutil import parser as dateparse
@@ -22,14 +22,14 @@ from openai import OpenAI
 from flask import make_response
 
 
-# ── Boot ──────────────────────────────────────────────────────────────────
+# ── Boot ────────────────────────────────────────────────────────────────────
 print("✅ Flask server is starting")
 load_dotenv()
 
-# ── OpenAI client ────────────────────────────────────────────────────────
+# ── OpenAI client ──────────────────────────────────────────────────────────
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# ── Flask app ────────────────────────────────────────────────────────────
+# ── Flask app ──────────────────────────────────────────────────────────────
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 app.secret_key = os.getenv("SECRET_KEY", "dev-key-change-in-production")
 
@@ -43,10 +43,10 @@ CORS(app, resources={
     }
 })
 
-# ── Conversation Memory Store ────────────────────────────────────────────
+# ── Conversation Memory Store ──────────────────────────────────────────────
 conversation_memory = {}  # In production, use Redis or similar
 
-# ── Postgres (optional) ──────────────────────────────────────────────────
+# ── Postgres (optional) ────────────────────────────────────────────────────
 HAVE_DB = False
 ConnectionPool = None
 try:
@@ -67,14 +67,79 @@ else:
     if not DATABASE_URL:
         print("⚠️ DATABASE_URL not set. Family context endpoints will be disabled.")
 
-# ── Knowledge base (embeddings already prepared) ────────────────────────
+# ── Knowledge base (embeddings already prepared) ───────────────────────────
 with open("kb_chunks/kb_chunks.pkl", "rb") as f:
     kb_chunks = pickle.load(f)
 
 EMBEDDINGS = np.array([chunk["embedding"] for chunk in kb_chunks], dtype=np.float32)
 METADATA = kb_chunks
 
-# ── Conversation Intelligence ────────────────────────────────────────────
+# Debug + validation
+print("KB embeddings shape:", EMBEDDINGS.shape, flush=True)
+if EMBEDDINGS.ndim != 2 or EMBEDDINGS.shape[0] == 0 or EMBEDDINGS.shape[1] < 32:
+    # If you see something like (N, 10), your KB wasn't built with real OpenAI embeddings.
+    print("⚠️ KB embeddings look wrong – expected (N, 1536) for text-embedding-3-small.", flush=True)
+
+
+# ── Improved Response Formatting ──────────────────────────────────────────
+def detect_topic_from_question(question_text):
+    """Simple topic detection"""
+    q_lower = question_text.lower()
+    if any(word in q_lower for word in ["fee", "cost", "price", "tuition", "charges"]):
+        return "fees"
+    elif any(word in q_lower for word in ["admission", "apply", "join", "register"]):
+        return "admissions"
+    elif any(word in q_lower for word in ["subject", "curriculum", "academic"]):
+        return "subjects"
+    elif any(word in q_lower for word in ["boarding", "boarder", "house"]):
+        return "boarding"
+    elif any(word in q_lower for word in ["scholarship", "bursary", "award"]):
+        return "scholarships"
+    elif any(word in q_lower for word in ["open", "visit", "tour"]):
+        return "open_events"
+    elif any(word in q_lower for word in ["sixth form", "a level", "upper college"]):
+        return "sixth_form"
+    elif any(word in q_lower for word in ["sport", "athletics", "rugby", "netball"]):
+        return "sport"
+    return None
+
+def format_fees_response(clean_response, detected_topic):
+    """Format fees responses with better structure"""
+    if detected_topic == "fees" and any(word in clean_response.lower() for word in ["prep", "college", "boarding", "day"]):
+        return f"""**School Fees for 2025-26**
+
+{clean_response}
+
+**Important Notes:**
+• All fees shown are exclusive of VAT (20% will be added)
+• Additional costs may apply for trips, activities, and equipment  
+• Bursaries and scholarships are available to eligible families
+• Payment plans can be arranged
+
+For the most current fees information, detailed breakdowns, and payment options, please visit our official fees page."""
+    return clean_response
+
+def get_better_url_and_label(detected_topic, meta_url):
+    """Get appropriate website URLs based on topic"""
+    topic_urls = {
+        "fees": ("https://www.cheltenhamcollege.org/admissions/fees/", "View fees page"),
+        "admissions": ("https://www.cheltenhamcollege.org/admissions/", "Visit admissions page"),
+        "subjects": ("https://www.cheltenhamcollege.org/college/curriculum/", "Explore curriculum"),
+        "boarding": ("https://www.cheltenhamcollege.org/college/boarding/", "Discover boarding life"),
+        "scholarships": ("https://www.cheltenhamcollege.org/admissions/scholarships-awards/", "View scholarships"),
+        "open_events": ("https://www.cheltenhamcollege.org/admissions/visit-us/open-events/", "Book open event"),
+        "sixth_form": ("https://www.cheltenhamcollege.org/college/upper-college-16-18/", "Learn about Sixth Form"),
+        "sport": ("https://www.cheltenhamcollege.org/college/co-curricular/sport/", "Explore sports"),
+    }
+    
+    if detected_topic and detected_topic in topic_urls:
+        return topic_urls[detected_topic]
+    
+    # Fallback to original metadata or default
+    return meta_url or "https://www.cheltenhamcollege.org/", "Visit website"
+
+
+# ── Conversation Intelligence ──────────────────────────────────────────────
 class ConversationTracker:
     def __init__(self, session_id: str, family_id: Optional[str] = None):
         self.session_id = session_id
@@ -134,7 +199,7 @@ class ConversationTracker:
             self.emotional_state == "concerned"
         )
 
-# ── Enhanced Response Builder ────────────────────────────────────────────
+# ── Enhanced Response Builder ──────────────────────────────────────────────
 class ResponseEnhancer:
     def __init__(self):
         self.follow_up_questions = {
@@ -224,7 +289,7 @@ class ResponseEnhancer:
         """Generate contextual follow-up question"""
         
         if not context.last_topic:
-            return "Is there anything specific you'd like to know about More House?"
+            return "Is there anything specific you'd like to know about Cheltenham College?"
             
         topic_key = self._categorize_topic(context.last_topic)
         questions = self.follow_up_questions.get(topic_key, ["What else would you like to know?"])
@@ -256,7 +321,7 @@ class ResponseEnhancer:
         else:
             return "general"
 
-# ── Utilities ────────────────────────────────────────────────────────────
+# ── Utilities ──────────────────────────────────────────────────────────────
 def remove_bullets(text: str) -> str:
     return re.sub(r"^[\s]*([•\-\*\d]+\s*)+", "", text, flags=re.MULTILINE)
 
@@ -269,24 +334,46 @@ def safe_trim(v: Any, limit: int = 120) -> str:
     s = str(v).strip()
     return (s if len(s) <= limit else s[:limit] + "…")
 
-# ── Embedding function ───────────────────────────────────────────────────
+# ── Embedding function ─────────────────────────────────────────────────────
 def embed_text(text: str) -> np.ndarray:
     resp = client.embeddings.create(
-        model="text-embedding-3-small",
+        model="text-embedding-3-small",  # 1536-d
         input=text.strip()
     )
-    return np.array(resp.data[0].embedding, dtype=np.float32)
+    vec = np.array(resp.data[0].embedding, dtype=np.float32)
+    # Guard: if KB dim doesn't match query dim, skip RAG gracefully
+    if EMBEDDINGS.ndim == 2 and EMBEDDINGS.shape[0] > 0 and EMBEDDINGS.shape[1] != vec.shape[0]:
+        print(f"⚠️ Embedding dim mismatch – KB:{EMBEDDINGS.shape[1]} vs query:{vec.shape[0]}. "
+              f"Rebuild KB with text-embedding-3-small OR change this model to match the KB.",
+              flush=True)
+    return vec
 
-# ── Vector search ────────────────────────────────────────────────────────
+
+# ── Vector search ──────────────────────────────────────────────────────────
 def vector_search(query: str, k: int = 10):
     q_vec = embed_text(query)
+
+    # If KB not ready or dims don't align, skip vector search safely
+    if EMBEDDINGS.ndim != 2 or EMBEDDINGS.shape[0] == 0:
+        return np.array([]), np.array([], dtype=int)
+    if EMBEDDINGS.shape[1] != q_vec.shape[0]:
+        print(f"⚠️ Skipping vector search due to dim mismatch (KB:{EMBEDDINGS.shape[1]} vs query:{q_vec.shape[0]}).", flush=True)
+        return np.array([]), np.array([], dtype=int)
+
     norm_q = np.linalg.norm(q_vec) + 1e-10
     norms = np.linalg.norm(EMBEDDINGS, axis=1) + 1e-10
     sims = (EMBEDDINGS @ q_vec) / (norms * norm_q)
-    idxs = np.argsort(sims)[::-1][:k]
+
+    if k >= sims.shape[0]:
+        idxs = np.argsort(sims)[::-1]
+    else:
+        top_k = np.argpartition(sims, -k)[-k:]
+        idxs = top_k[np.argsort(sims[top_k])[::-1]]
+
     return sims, idxs
 
-# ── DB helpers ───────────────────────────────────────────────────────────
+
+# ── DB helpers ─────────────────────────────────────────────────────────────
 def fetch_family_context(family_id: str) -> Optional[Dict[str, Any]]:
     if not db_pool:
         return None
@@ -361,15 +448,15 @@ def log_interaction_to_db(family_id: str, question: str, answer: str, metadata: 
     except Exception as e:
         print(f"Failed to log interaction: {e}")
 
-# ── Enhanced Answer Logic ────────────────────────────────────────────────
+# ── Enhanced Answer Logic ──────────────────────────────────────────────────
 from static_qa_config import STATIC_QA_LIST as STATIC_QAS
 from contextualButtons import get_suggestions
 from language_engine import translate
 
 response_enhancer = ResponseEnhancer()
 
-# ── Open Days Scraper + Cache ───────────────────────────────────────────
-OPEN_DAYS_URL = "https://www.morehouse.org.uk/admissions/joining-more-house/"
+# ── Open Days Scraper + Cache ──────────────────────────────────────────────
+OPEN_DAYS_URL = "https://www.cheltenhamcollege.org/admissions/visit-us/open-events/"
 OPEN_DAYS_CACHE = "/tmp/open_days.json"  # or use S3 path
 REFRESH_SECRET = os.getenv("OPEN_DAYS_REFRESH_SECRET", "change-me")
 
@@ -385,6 +472,15 @@ def get_open_day_events():
 
 def find_best_answer(question, language='en', session_id=None, family_id=None):
     q_lower = question.strip().lower()
+    # Always match static against English
+    q_for_match = q_lower
+    if language != "en":
+        try:
+            from language_engine import translate
+            q_for_match = translate(question, "en").strip().lower()
+        except Exception as e:
+            print("Translate-to-EN error:", e)
+
     print(f"🧠 Processing: {q_lower} | Lang: {language} | Session: {session_id}")
     
     # Special case: Open Days / Visits
@@ -491,24 +587,115 @@ def find_best_answer(question, language='en', session_id=None, family_id=None):
         )
         raw = chat.choices[0].message.content
         clean = format_response(remove_bullets(raw))
-        
-        # Track interaction
-        tracker.add_interaction(question, clean, "general")
-        
-        # Enhance for voice
+
+        # Get metadata first for improvement logic
+        meta = METADATA[idxs[0]]
+
+        # IMPROVE: Enhanced response formatting and better links
+        detected_topic = detect_topic_from_question(question)
+
+        # Apply improved formatting based on topic and content
+        if detected_topic == "fees":
+            # Remove all the ** markdown formatting and clean up the text
+            clean = re.sub(r'\*\*([^*]+)\*\*:', r'\1:', clean)
+            clean = re.sub(r'\*\*([^*]+)\*\*', r'\1', clean)
+            
+            # Fix the awkward spacing and line breaks
+            clean = re.sub(r'(\w)\s*([A-Z][^:]*:)', r'\1\n\n\2', clean)
+            clean = re.sub(r'\n{3,}', '\n\n', clean)
+            
+            # Check if it contains fee amounts
+            has_amounts = bool(re.search(r'£[\d,]+', clean))
+            
+            if has_amounts:
+                improved_answer = f"""SCHOOL FEES 2025-26
+
+{clean.strip()}
+
+IMPORTANT INFORMATION:
+
+• All fees exclude VAT (20% will be added to final amount)
+• Bursaries and scholarships available for eligible families  
+• Flexible payment plans can be arranged
+
+For complete fee schedules and additional cost breakdowns, please visit our fees page."""
+            else:
+                improved_answer = f"""FEES & FINANCIAL INFORMATION
+
+{clean.strip()}
+
+IMPORTANT INFORMATION:
+
+• All fees exclude VAT (20% will be added to final amount)
+• Bursaries and scholarships available for eligible families
+• Flexible payment plans can be arranged
+
+For detailed fee schedules, payment options, and financial support information, please visit our fees page."""
+        elif detected_topic == "open_events" or "open morning" in clean.lower():
+            # Remove markdown and format open events cleanly
+            clean = re.sub(r'\*\*([^*]+)\*\*', r'\1', clean)
+            
+            date_pattern = r'(\w+day),?\s*(\d{1,2})[a-z]*\s*(\w+)\s*(\d{4})'
+            dates = re.findall(date_pattern, clean)
+            if dates:
+                formatted_dates = []
+                for day, date_num, month, year in dates:
+                    formatted_dates.append(f"{day} {date_num} {month} {year} from 9:30 AM - 12:30 PM")
+                
+                if len(formatted_dates) > 0:
+                    events_list = "\n".join([f"• {date}" for date in formatted_dates])
+                    
+                    improved_answer = f"""OPEN MORNING EVENTS
+
+Join us for an Open Morning to explore our facilities, meet staff and students, and experience school life firsthand.
+
+UPCOMING DATES:
+
+{events_list}
+
+HOW TO BOOK:
+
+Email: visits@cheltenhamcollege.org
+Phone: 01242 265600
+
+These events fill up quickly, so we recommend booking early to secure your place."""
+                else:
+                    improved_answer = re.sub(r'\*\*([^*]+)\*\*', r'\1', clean)
+            else:
+                improved_answer = re.sub(r'\*\*([^*]+)\*\*', r'\1', clean)
+        elif "head" in clean.lower() and ("nicola" in clean.lower() or "huggett" in clean.lower()):
+            improved_answer = """SCHOOL LEADERSHIP
+
+Head: Mrs Nicola Huggett
+
+Mrs Huggett leads Cheltenham College with extensive experience in independent education. She is committed to academic excellence, pastoral care, and developing well-rounded students who are prepared for future success.
+
+For more information about our leadership team and staff, please visit our website."""
+        else:
+            # Remove markdown formatting for all other topics
+            improved_answer = re.sub(r'\*\*([^*]+)\*\*:', r'\1:', clean)
+            improved_answer = re.sub(r'\*\*([^*]+)\*\*', r'\1', improved_answer)
+            improved_answer = re.sub(r'(\w)\s*([A-Z][^:]*:)', r'\1\n\n\2', improved_answer)
+            improved_answer = re.sub(r'\n{3,}', '\n\n', improved_answer).strip()
+            
+        better_url, better_label = get_better_url_and_label(detected_topic, meta.get('url'))
+
+        # Track interaction with improved answer
+        tracker.add_interaction(question, improved_answer, "general")
+
+        # Enhance for voice using the improved answer
         if session_id:
             family_ctx = fetch_family_context(family_id) if family_id else None
-            clean = response_enhancer.enhance_for_voice(clean, tracker, family_ctx)
-        
+            improved_answer = response_enhancer.enhance_for_voice(improved_answer, tracker, family_ctx)
+
         # Translate if needed
         if language != "en":
             try:
-                clean = translate(clean, language)
+                improved_answer = translate(improved_answer, language)
             except Exception as e:
                 print("Translate error:", e)
 
-        meta = METADATA[idxs[0]]
-        return clean, meta.get('url'), meta.get('label') or "View document", None, "rag"
+        return improved_answer, better_url, better_label, None, "rag"
 
     # No match
     print("❌ No suitable match found.")
@@ -564,7 +751,7 @@ def _read_cache():
     except Exception:
         return {"events": [], "last_checked": None, "source_url": OPEN_DAYS_URL}
         
-# ── Routes ───────────────────────────────────────────────────────────────
+# ── Routes ─────────────────────────────────────────────────────────────────
 
 @app.route("/tasks/refresh-open-days", methods=["POST"])
 def refresh_open_days():
@@ -681,7 +868,7 @@ def ask():
         'session_id': session_id
     })
 
-# ── Enhanced Realtime Session for Voice ─────────────────────────────────
+# ── Enhanced Realtime Session for Voice ────────────────────────────────────
 @app.route("/realtime/session", methods=["POST"])
 def create_realtime_session():
     """Create enhanced voice session with better conversational flow"""
@@ -724,9 +911,8 @@ def create_realtime_session():
         f"PRIMARY LANGUAGE: {language}. Always speak and respond in this language (unless the user explicitly switches). "
         "Understand and recognise user speech in this language from the first turn. "
         "When asked about open days, visits, or tours, ALWAYS call the tool `get_open_days` and use only its response. Never guess dates. "
-        "You are Emily, a warm and knowledgeable admissions advisor for More House School, "
-        "an independent all-girls school in Knightsbridge, London. "
-        "Speak with a friendly British accent, using natural conversational tone. "
+        "You are Emily, a warm and knowledgeable admissions advisor for Cheltenham College, a leading co-educational independent boarding and day school in Cheltenham, Gloucestershire. "
+        "Speak in BBC English (Received Pronunciation) at all times – clear, neutral, precise, and newsreader-like. Enunciate crisply, avoid regionalisms and slang, use British spelling and vocabulary, keep a measured pace with natural sentence-end intonation. Warm and professional, not salesy; never caricature the accent. "
         "Keep responses concise but complete - aim for 2-3 sentences per turn. "
         "ALWAYS complete your thoughts before pausing. "
         "IMPORTANT: Always finish your sentences completely. "
@@ -769,7 +955,7 @@ def create_realtime_session():
         "- Speed up slightly when listing things "
         "- Slow down for important information "
         "- Use emphasis naturally: 'We have THE most amazing science labs' "
-        "- Trail off occasionally: 'The thing about More House is...' "
+        "- Trail off occasionally: 'The thing about Cheltenham College is...' "
         "Never sound robotic or scripted. "
         "Never be perfectly eloquent - humans stumble occasionally. "
         "Never cut off mid-sentence abruptly. "

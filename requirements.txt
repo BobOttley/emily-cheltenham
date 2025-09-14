@@ -9,3 +9,10 @@ psycopg_pool==3.2.6
 gunicorn==20.1.0
 python-dateutil==2.9.0.post0
 beautifulsoup4==4.12.3
+
+# Added for scraper + embeddings
+pymupdf==1.24.4
+python-docx==1.1.2
+tiktoken==0.7.0
+lxml==5.2.1
+

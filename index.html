@@ -1,10 +1,22 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Emily Chatbot</title>
-  <style>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Emily Chatbot</title>
+  
+    <!-- Force chatbot to use local Flask in dev, Cheltenham backend in production -->
+    <script>
+      // Local dev vs production
+      window.PENAI_CHATBOT_ORIGIN =
+        (location.hostname === '127.0.0.1' || location.hostname === 'localhost')
+          ? 'https://127.0.0.1:5001'
+          : 'https://emily-cheltenham.onrender.com';  // your Render URL
+    </script>
+    
+  
+    <style>
+  
     :root {
       --primary-color: #091825;
       --accent-color: #FF9F1C;
