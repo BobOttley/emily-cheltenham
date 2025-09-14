@@ -906,6 +906,8 @@ def create_realtime_session():
         events_str = "No upcoming Open Days are currently listed. "
 
     # --- Build instructions string ---
+    # --- Build instructions string ---
+    # --- Build instructions string ---
     instructions = (
         f"{events_str}"
         f"PRIMARY LANGUAGE: {language}. Always speak and respond in this language (unless the user explicitly switches). "
@@ -1095,6 +1097,7 @@ def embed_route():
     resp.headers['Access-Control-Allow-Origin'] = '*'
     return resp
 
+
 @app.route('/conversation/<session_id>', methods=['GET'])
 def get_conversation_summary(session_id):
     """Get conversation summary for dashboard"""
@@ -1110,5 +1113,7 @@ def get_conversation_summary(session_id):
         "should_handoff": tracker.should_offer_human_handoff()
     })
 
+
 if __name__ == '__main__':
-    app.run(debug=True, ssl_context='adhoc', port=5001)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
