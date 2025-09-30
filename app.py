@@ -374,7 +374,7 @@ def vector_search(query: str, k: int = 10):
 
 
 # ── DB helpers ─────────────────────────────────────────────────────────────
-def fetch_family_context(family_id: str) -> Optional[Dict[str, Any]]:
+def fetch_family_context(family_id: str, school: str = 'cheltenham') -> Optional[Dict[str, Any]]:
     if not db_pool:
         return None
     sql = """
@@ -390,13 +390,13 @@ def fetch_family_context(family_id: str) -> Optional[Dict[str, Any]]:
       COALESCE(country, '')                   AS country,
       COALESCE(language_pref, 'en')           AS language_pref
     FROM public.inquiries
-    WHERE id = %s
+    WHERE id = %s AND school = %s
     LIMIT 1;
     """
     try:
         with db_pool.connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(sql, (family_id,))
+                cur.execute(sql, (family_id, school))
                 row = cur.fetchone()
                 if not row:
                     return None
