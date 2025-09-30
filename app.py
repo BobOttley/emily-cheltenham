@@ -818,6 +818,21 @@ def get_family(family_id):
         return jsonify({"ok": False, "error": "Family not found"}), 404
     return jsonify({"ok": True, "family": ctx})
 
+@app.route("/realtime/tool/get_family_context", methods=["POST"])
+def realtime_tool_get_family_context():
+    """Tool endpoint for realtime model to fetch family context"""
+    body = request.get_json(silent=True) or {}
+    family_id = body.get("family_id")
+    
+    if not family_id:
+        return jsonify({"ok": False, "error": "family_id required"})
+    
+    ctx = fetch_family_context(family_id)
+    if not ctx:
+        return jsonify({"ok": False, "error": "Family not found"})
+    
+    return jsonify({"ok": True, "family": ctx})
+
 @app.route("/realtime/tool/get_open_days", methods=["POST"])
 def realtime_tool_get_open_days():
     """Tool endpoint for realtime model to fetch open days"""
@@ -906,13 +921,20 @@ def create_realtime_session():
     else:
         events_str = "No upcoming Open Days are currently listed. "
 
+    # Add family context instruction
+    family_instruction = ""
+    if family_id:
+        family_instruction = (
+            f"CRITICAL: This conversation is with family_id '{family_id}'. "
+            f"AT THE START of the conversation, IMMEDIATELY call the get_family_context tool with family_id '{family_id}' to fetch their personalized information. "
+            "Once you have their details, use the child's name, parent's name, interests, year group, and boarding preference naturally throughout the conversation. "
+            "Always personalize your responses with their specific information. "
+        )
+
     instructions = (
+        f"{family_instruction}"
         f"{events_str}"
         f"PRIMARY LANGUAGE: {language}. Always speak and respond in this language (unless the user explicitly switches). "
-        f"FAMILY CONTEXT: For family_id '{family_id}', ALWAYS fetch their personalized information using the kb_search tool with query 'family context {family_id}'. "
-        "Use their child's name, interests, year group, and other details to personalize your responses. "
-        "Reference their specific situation naturally in conversation. "
-        "When you receive family context, remember: child's name, parent's name, year group, interests, boarding preference. "
         "Understand and recognise user speech in this language from the first turn. "
         "When asked about open days, visits, or tours, ALWAYS call the tool `get_open_days` and use only its response. Never guess dates. "
         "You are Emily, a warm and knowledgeable admissions advisor for Cheltenham College, a leading co-educational independent boarding and day school in Cheltenham, Gloucestershire. "
@@ -1016,6 +1038,18 @@ def create_realtime_session():
                                 "time": {"type": "string", "description": "Requested tour time"}
                             },
                             "required": []
+                        }
+                    },
+                    {
+                        "type": "function",
+                        "name": "get_family_context",
+                        "description": "Fetch personalized family information including child's name, interests, year group, parent details. CALL THIS FIRST when starting a conversation with a family.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "family_id": {"type": "string", "description": "The inquiry/family ID"}
+                            },
+                            "required": ["family_id"]
                         }
                     },
                     {
