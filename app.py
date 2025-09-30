@@ -43,6 +43,27 @@ CORS(app, resources={
     }
 })
 
+# ── School Configuration ────────────────────────────────────────────────────
+SCHOOL_ID = os.getenv("SCHOOL_ID", "cheltenham")
+
+SCHOOL_CONFIG = {
+    'cheltenham': {
+        'name': 'Cheltenham College',
+        'website': 'https://www.cheltenhamcollege.org',
+        'admissions_email': 'admissions@cheltenhamcollege.org',
+        'phone': '+44 (0)1242 265600'
+    },
+    'more-house': {
+        'name': 'More House School',
+        'website': 'https://www.morehouseschool.co.uk',
+        'admissions_email': 'admissions@morehouseschool.co.uk',
+        'phone': '+44 (0)20 7235 2855'
+    }
+}
+
+CURRENT_SCHOOL = SCHOOL_CONFIG.get(SCHOOL_ID, SCHOOL_CONFIG['cheltenham'])
+print(f"🏫 Emily configured for: {CURRENT_SCHOOL['name']}")
+
 # ── Conversation Memory Store ──────────────────────────────────────────────
 conversation_memory = {}  # In production, use Redis or similar
 
@@ -77,7 +98,6 @@ METADATA = kb_chunks
 # Debug + validation
 print("KB embeddings shape:", EMBEDDINGS.shape, flush=True)
 if EMBEDDINGS.ndim != 2 or EMBEDDINGS.shape[0] == 0 or EMBEDDINGS.shape[1] < 32:
-    # If you see something like (N, 10), your KB wasn't built with real OpenAI embeddings.
     print("⚠️ KB embeddings look wrong – expected (N, 1536) for text-embedding-3-small.", flush=True)
 
 
@@ -135,7 +155,6 @@ def get_better_url_and_label(detected_topic, meta_url):
     if detected_topic and detected_topic in topic_urls:
         return topic_urls[detected_topic]
     
-    # Fallback to original metadata or default
     return meta_url or "https://www.cheltenhamcollege.org/", "Visit website"
 
 
@@ -160,7 +179,7 @@ class ConversationTracker:
         self.interactions.append({
             "timestamp": datetime.now().isoformat(),
             "question": question,
-            "answer": answer[:200],  # Store truncated for memory
+            "answer": answer[:200],
             "topic": topic
         })
         
@@ -168,12 +187,10 @@ class ConversationTracker:
             self.topics_discussed.add(topic)
             self.last_topic = topic
             
-        # Detect high intent signals
         high_intent_keywords = ["apply", "visit", "fee", "scholarship", "when can", "how do I", "register"]
         if any(keyword in question.lower() for keyword in high_intent_keywords):
             self.high_intent_signals += 1
             
-        # Detect concerns
         concern_keywords = ["worried", "concern", "anxiety", "difficult", "struggle", "help", "support", "nervous"]
         if any(keyword in question.lower() for keyword in concern_keywords):
             self.concerns.append(question)
@@ -186,12 +203,11 @@ class ConversationTracker:
             "topics": list(self.topics_discussed),
             "high_intent": self.high_intent_signals >= 2,
             "emotional_state": self.emotional_state,
-            "concerns": self.concerns[:3],  # Top 3 concerns
+            "concerns": self.concerns[:3],
             "last_topic": self.last_topic
         }
         
     def should_offer_human_handoff(self) -> bool:
-        """Determine if we should offer to connect with admissions"""
         return (
             self.high_intent_signals >= 3 or 
             len(self.concerns) >= 2 or
@@ -238,37 +254,26 @@ class ResponseEnhancer:
         ]
         
     def enhance_for_voice(self, base_answer: str, context: ConversationTracker, family_ctx: Optional[Dict] = None) -> str:
-        """Make responses conversational and engaging"""
-        
-        # Start with acknowledgment
         enhanced = self._add_acknowledgment(context)
-        
-        # Add the core answer
         enhanced += f" {base_answer}"
         
-        # Personalize if we have family context
         if family_ctx and family_ctx.get('child_name'):
             enhanced = enhanced.replace("your child", family_ctx['child_name'])
             enhanced = enhanced.replace("your daughter", family_ctx['child_name'])
             
-        # Add reassurance if concerned
         if context.emotional_state == "concerned":
             enhanced = f"{self.reassurance_phrases[len(context.concerns) % len(self.reassurance_phrases)]} {enhanced}"
             
-        # Add follow-up question
         follow_up = self._get_follow_up_question(context, family_ctx)
         if follow_up:
             enhanced += f" {follow_up}"
             
-        # Offer human handoff if high intent
         if context.should_offer_human_handoff() and len(context.interactions) % 5 == 0:
             enhanced += " By the way, would you like me to arrange for someone from our admissions team to call you directly?"
             
         return enhanced
         
     def _add_acknowledgment(self, context: ConversationTracker) -> str:
-        """Add natural acknowledgment based on context"""
-        
         if len(context.interactions) == 0:
             return "Hello! What a lovely question to start with."
         elif context.last_topic in str(context.topics_discussed):
@@ -286,8 +291,6 @@ class ResponseEnhancer:
             return acknowledgments[len(context.interactions) % len(acknowledgments)]
             
     def _get_follow_up_question(self, context: ConversationTracker, family_ctx: Optional[Dict] = None) -> str:
-        """Generate contextual follow-up question"""
-        
         if not context.last_topic:
             return "Is there anything specific you'd like to know about Cheltenham College?"
             
@@ -296,7 +299,6 @@ class ResponseEnhancer:
         
         question = questions[len(context.interactions) % len(questions)]
         
-        # Personalize with child's name
         if family_ctx and family_ctx.get('child_name'):
             question = question.replace("{child_name}", family_ctx['child_name'])
         else:
@@ -305,7 +307,6 @@ class ResponseEnhancer:
         return question
         
     def _categorize_topic(self, topic: str) -> str:
-        """Categorize topic for follow-up selection"""
         topic_lower = topic.lower() if topic else ""
         
         if any(word in topic_lower for word in ["fee", "cost", "price", "burs", "scholar"]):
@@ -337,11 +338,10 @@ def safe_trim(v: Any, limit: int = 120) -> str:
 # ── Embedding function ─────────────────────────────────────────────────────
 def embed_text(text: str) -> np.ndarray:
     resp = client.embeddings.create(
-        model="text-embedding-3-small",  # 1536-d
+        model="text-embedding-3-small",
         input=text.strip()
     )
     vec = np.array(resp.data[0].embedding, dtype=np.float32)
-    # Guard: if KB dim doesn't match query dim, skip RAG gracefully
     if EMBEDDINGS.ndim == 2 and EMBEDDINGS.shape[0] > 0 and EMBEDDINGS.shape[1] != vec.shape[0]:
         print(f"⚠️ Embedding dim mismatch – KB:{EMBEDDINGS.shape[1]} vs query:{vec.shape[0]}. "
               f"Rebuild KB with text-embedding-3-small OR change this model to match the KB.",
@@ -353,7 +353,6 @@ def embed_text(text: str) -> np.ndarray:
 def vector_search(query: str, k: int = 10):
     q_vec = embed_text(query)
 
-    # If KB not ready or dims don't align, skip vector search safely
     if EMBEDDINGS.ndim != 2 or EMBEDDINGS.shape[0] == 0:
         return np.array([]), np.array([], dtype=int)
     if EMBEDDINGS.shape[1] != q_vec.shape[0]:
@@ -374,9 +373,21 @@ def vector_search(query: str, k: int = 10):
 
 
 # ── DB helpers ─────────────────────────────────────────────────────────────
-def fetch_family_context(family_id: str, school: str = 'cheltenham') -> Optional[Dict[str, Any]]:
+def fetch_family_context(family_id: str, school: str = None) -> Optional[Dict[str, Any]]:
+    """
+    Fetch family context from inquiries table with school filtering
+    
+    Args:
+        family_id: The inquiry ID to fetch
+        school: School identifier (defaults to SCHOOL_ID)
+    """
     if not db_pool:
         return None
+    
+    # Use global SCHOOL_ID if not specified
+    if school is None:
+        school = SCHOOL_ID
+        
     sql = """
     SELECT
       id AS family_id,
@@ -388,7 +399,8 @@ def fetch_family_context(family_id: str, school: str = 'cheltenham') -> Optional
       COALESCE(parent_name, contact_name, '') AS parent_name,
       COALESCE(parent_email, contact_email, '') AS parent_email,
       COALESCE(country, '')                   AS country,
-      COALESCE(language_pref, 'en')           AS language_pref
+      COALESCE(language_pref, 'en')           AS language_pref,
+      school
     FROM public.inquiries
     WHERE id = %s AND school = %s
     LIMIT 1;
@@ -416,21 +428,35 @@ def fetch_family_context(family_id: str, school: str = 'cheltenham') -> Optional
                     "language_pref": (data.get("language_pref") or "en")[:5],
                     "parent_name": data.get("parent_name"),
                     "parent_email": data.get("parent_email"),
+                    "school": data.get("school")
                 }
                 return summary
     except Exception as e:
         print("DB fetch error:", e)
         return None
 
-def log_interaction_to_db(family_id: str, question: str, answer: str, metadata: Dict, school: str = 'cheltenham'):
-    """Log interactions for admissions dashboard"""
+def log_interaction_to_db(family_id: str, question: str, answer: str, metadata: Dict, school: str = None):
+    """
+    Log interactions for admissions dashboard with school filtering
+    
+    Args:
+        family_id: The inquiry ID
+        question: User's question
+        answer: Emily's answer
+        metadata: Additional metadata
+        school: School identifier (defaults to SCHOOL_ID)
+    """
     if not db_pool or not family_id:
         return
+    
+    # Use global SCHOOL_ID if not specified
+    if school is None:
+        school = SCHOOL_ID
         
     sql = """
     INSERT INTO chat_interactions 
-    (family_id, question, answer, topic, sentiment, timestamp, metadata)
-    VALUES (%s, %s, %s, %s, %s, %s, %s)
+    (family_id, question, answer, topic, sentiment, timestamp, metadata, school)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
     """
     try:
         with db_pool.connection() as conn:
@@ -442,7 +468,8 @@ def log_interaction_to_db(family_id: str, question: str, answer: str, metadata: 
                     metadata.get('topic'),
                     metadata.get('sentiment'),
                     datetime.now(),
-                    json.dumps(metadata)
+                    json.dumps(metadata),
+                    school
                 ))
                 conn.commit()
     except Exception as e:
@@ -457,7 +484,7 @@ response_enhancer = ResponseEnhancer()
 
 # ── Open Days Scraper + Cache ──────────────────────────────────────────────
 OPEN_DAYS_URL = "https://www.cheltenhamcollege.org/admissions/visit-us/open-events/"
-OPEN_DAYS_CACHE = "/tmp/open_days.json"  # or use S3 path
+OPEN_DAYS_CACHE = "/tmp/open_days.json"
 REFRESH_SECRET = os.getenv("OPEN_DAYS_REFRESH_SECRET", "change-me")
 
 def get_open_day_events():
@@ -472,7 +499,6 @@ def get_open_day_events():
 
 def find_best_answer(question, language='en', session_id=None, family_id=None):
     q_lower = question.strip().lower()
-    # Always match static against English
     q_for_match = q_lower
     if language != "en":
         try:
@@ -520,11 +546,9 @@ def find_best_answer(question, language='en', session_id=None, family_id=None):
             print(f"✅ Exact match on: {qa['key']}")
             answer = qa['answer']
             
-            # Track interaction
             tracker.add_interaction(question, answer, qa['key'])
             
-            # Enhance for voice
-            if session_id:  # Only enhance for voice sessions
+            if session_id:
                 family_ctx = fetch_family_context(family_id) if family_id else None
                 answer = response_enhancer.enhance_for_voice(answer, tracker, family_ctx)
                 
@@ -547,10 +571,8 @@ def find_best_answer(question, language='en', session_id=None, family_id=None):
         print(f"🟡 Fuzzy match on: {best_match['key']} (score {best_score:.2f})")
         answer = best_match['answer']
         
-        # Track interaction
         tracker.add_interaction(question, answer, best_match['key'])
         
-        # Enhance for voice
         if session_id:
             family_ctx = fetch_family_context(family_id) if family_id else None
             answer = response_enhancer.enhance_for_voice(answer, tracker, family_ctx)
@@ -563,10 +585,9 @@ def find_best_answer(question, language='en', session_id=None, family_id=None):
         print(f"🔵 Vector match (cos={sims[idxs[0]]:.2f})")
         contexts = [METADATA[i].get("text", "") for i in idxs[:10]]
         
-        # Build conversation-aware prompt
         conversation_context = ""
         if tracker and len(tracker.interactions) > 0:
-            recent = tracker.interactions[-3:]  # Last 3 interactions
+            recent = tracker.interactions[-3:]
             conversation_context = "Previous context: " + " | ".join([f"Q: {i['question'][:50]}" for i in recent])
         
         prompt = (
@@ -588,23 +609,15 @@ def find_best_answer(question, language='en', session_id=None, family_id=None):
         raw = chat.choices[0].message.content
         clean = format_response(remove_bullets(raw))
 
-        # Get metadata first for improvement logic
         meta = METADATA[idxs[0]]
-
-        # IMPROVE: Enhanced response formatting and better links
         detected_topic = detect_topic_from_question(question)
 
-        # Apply improved formatting based on topic and content
         if detected_topic == "fees":
-            # Remove all the ** markdown formatting and clean up the text
             clean = re.sub(r'\*\*([^*]+)\*\*:', r'\1:', clean)
             clean = re.sub(r'\*\*([^*]+)\*\*', r'\1', clean)
-            
-            # Fix the awkward spacing and line breaks
             clean = re.sub(r'(\w)\s*([A-Z][^:]*:)', r'\1\n\n\2', clean)
             clean = re.sub(r'\n{3,}', '\n\n', clean)
             
-            # Check if it contains fee amounts
             has_amounts = bool(re.search(r'£[\d,]+', clean))
             
             if has_amounts:
@@ -632,7 +645,6 @@ IMPORTANT INFORMATION:
 
 For detailed fee schedules, payment options, and financial support information, please visit our fees page."""
         elif detected_topic == "open_events" or "open morning" in clean.lower():
-            # Remove markdown and format open events cleanly
             clean = re.sub(r'\*\*([^*]+)\*\*', r'\1', clean)
             
             date_pattern = r'(\w+day),?\s*(\d{1,2})[a-z]*\s*(\w+)\s*(\d{4})'
@@ -672,7 +684,6 @@ Mrs Huggett leads Cheltenham College with extensive experience in independent ed
 
 For more information about our leadership team and staff, please visit our website."""
         else:
-            # Remove markdown formatting for all other topics
             improved_answer = re.sub(r'\*\*([^*]+)\*\*:', r'\1:', clean)
             improved_answer = re.sub(r'\*\*([^*]+)\*\*', r'\1', improved_answer)
             improved_answer = re.sub(r'(\w)\s*([A-Z][^:]*:)', r'\1\n\n\2', improved_answer)
@@ -680,15 +691,12 @@ For more information about our leadership team and staff, please visit our websi
             
         better_url, better_label = get_better_url_and_label(detected_topic, meta.get('url'))
 
-        # Track interaction with improved answer
         tracker.add_interaction(question, improved_answer, "general")
 
-        # Enhance for voice using the improved answer
         if session_id:
             family_ctx = fetch_family_context(family_id) if family_id else None
             improved_answer = response_enhancer.enhance_for_voice(improved_answer, tracker, family_ctx)
 
-        # Translate if needed
         if language != "en":
             try:
                 improved_answer = translate(improved_answer, language)
@@ -716,18 +724,16 @@ def _extract_events_from_html(html: str):
         re.I
     )
 
-    unique = {}  # key: (event_name, date_iso) -> event dict
+    unique = {}
     for name, date_str in pat.findall(text):
         dt = dateparse.parse(date_str, dayfirst=True)
         if dt.date() < date.today():
             continue
 
-        # Normalise
         event_name = " ".join(name.strip().title().split())
         date_iso = dt.date().isoformat()
         key = (event_name, date_iso)
 
-        # Keep the first seen (or update booking_link if you later add a better one)
         if key not in unique:
             unique[key] = {
                 "event_name": event_name,
@@ -736,7 +742,6 @@ def _extract_events_from_html(html: str):
                 "booking_link": OPEN_DAYS_URL
             }
 
-    # Return sorted, de-duplicated list
     events = sorted(unique.values(), key=lambda e: (e["date_iso"], e["event_name"]))
     return events
 
@@ -835,7 +840,7 @@ def ask():
     question = data.get('question', '')
     language = data.get('language', 'en')
     family_id = data.get('family_id')
-    session_id = data.get('session_id')  # For voice sessions
+    session_id = data.get('session_id')
     
     answer, url, label, matched_key, source = find_best_answer(
         question, language, session_id, family_id
@@ -879,24 +884,20 @@ def create_realtime_session():
 
     body = request.get_json(silent=True) or {}
     
-    # Generate session ID for conversation tracking
     session_id = str(uuid.uuid4())
     family_id = body.get("family_id")
     
-    # Store session info
     if session_id not in conversation_memory:
         conversation_memory[session_id] = ConversationTracker(session_id, family_id)
-    # Store preferred language on tracker for later use
     try:
         setattr(conversation_memory[session_id], 'language', (body.get('language') or 'en').strip().lower())
     except Exception:
         pass
 
     model = body.get("model", "gpt-4o-realtime-preview")
-    voice = body.get("voice", "shimmer")  # shimmer = British female
+    voice = body.get("voice", "shimmer")
     language = (body.get("language") or "en").strip().lower()
 
-    # --- Build Open Days context ---
     events = get_open_day_events()
     if events:
         events_str = "Upcoming Open Days: " + "; ".join(
@@ -905,9 +906,6 @@ def create_realtime_session():
     else:
         events_str = "No upcoming Open Days are currently listed. "
 
-    # --- Build instructions string ---
-    # --- Build instructions string ---
-    # --- Build instructions string ---
     instructions = (
         f"{events_str}"
         f"PRIMARY LANGUAGE: {language}. Always speak and respond in this language (unless the user explicitly switches). "
@@ -1037,7 +1035,7 @@ def create_realtime_session():
 @app.route("/embed")
 def embed_route():
     """Serve the embed page with debugging"""
-    chatbot_origin = "https://emily-more-house.onrender.com"
+    chatbot_origin = "https://emily-cheltenham.onrender.com"
     
     html = f"""<!doctype html>
 <html>
@@ -1052,22 +1050,18 @@ def embed_route():
     window.PENAI_CHATBOT_ORIGIN = "{chatbot_origin}";
     window.PENAI_VOICE_LANG = (navigator.language||'en').slice(0,2);
     
-    // Debug logging
     console.log('Embed page loaded');
     console.log('PENAI_CHATBOT_ORIGIN:', window.PENAI_CHATBOT_ORIGIN);
     
-    // Monitor DOM changes
     window.addEventListener('DOMContentLoaded', function() {{
       console.log('DOM ready, penai-root exists:', !!document.getElementById('penai-root'));
       
-      // Check what gets created after script loads
       setTimeout(function() {{
         console.log('After 1s - Elements created:');
         console.log('- penai-toggle:', !!document.getElementById('penai-toggle'));
         console.log('- penai-chatbox:', !!document.getElementById('penai-chatbox'));
         console.log('- penai-styles:', !!document.getElementById('penai-styles'));
         
-        // Check if the toggle button is visible
         var toggle = document.getElementById('penai-toggle');
         if (toggle) {{
           var rect = toggle.getBoundingClientRect();
@@ -1081,7 +1075,6 @@ def embed_route():
 <body>
   <div id="penai-root"></div>
   
-  <!-- Load script with error handling -->
   <script 
     src="{chatbot_origin}/static/script.js" 
     onload="console.log('script.js loaded successfully')"
