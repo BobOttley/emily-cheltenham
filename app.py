@@ -422,7 +422,7 @@ def fetch_family_context(family_id: str, school: str = 'cheltenham') -> Optional
         print("DB fetch error:", e)
         return None
 
-def log_interaction_to_db(family_id: str, question: str, answer: str, metadata: Dict):
+def log_interaction_to_db(family_id: str, question: str, answer: str, metadata: Dict, school: str = 'cheltenham'):
     """Log interactions for admissions dashboard"""
     if not db_pool or not family_id:
         return
