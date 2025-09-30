@@ -12,6 +12,7 @@ import difflib
 from datetime import datetime, date
 from typing import Optional, Dict, Any, List
 
+
 import requests
 from bs4 import BeautifulSoup
 from dateutil import parser as dateparse
