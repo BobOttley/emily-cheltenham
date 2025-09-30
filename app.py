@@ -909,6 +909,10 @@ def create_realtime_session():
     instructions = (
         f"{events_str}"
         f"PRIMARY LANGUAGE: {language}. Always speak and respond in this language (unless the user explicitly switches). "
+        f"FAMILY CONTEXT: For family_id '{family_id}', ALWAYS fetch their personalized information using the kb_search tool with query 'family context {family_id}'. "
+        "Use their child's name, interests, year group, and other details to personalize your responses. "
+        "Reference their specific situation naturally in conversation. "
+        "When you receive family context, remember: child's name, parent's name, year group, interests, boarding preference. "
         "Understand and recognise user speech in this language from the first turn. "
         "When asked about open days, visits, or tours, ALWAYS call the tool `get_open_days` and use only its response. Never guess dates. "
         "You are Emily, a warm and knowledgeable admissions advisor for Cheltenham College, a leading co-educational independent boarding and day school in Cheltenham, Gloucestershire. "
