@@ -724,6 +724,49 @@ Remember: You are helping {user_name} draft THEIR reply, not replying as Emily."
         "cc": reply_cc_list
     })
 
+@app.route("/api/emails/send", methods=["POST"])
+def send_email():
+    """Send an email immediately (no draft)"""
+    h = _auth_headers()
+    if not h:
+        return jsonify({"error": "Not authenticated"}), 401
+    
+    data = request.get_json() or {}
+    
+    # Build the email message
+    email = {
+        "message": {
+            "subject": data.get("subject", "Email from Emily"),
+            "body": {
+                "contentType": "HTML",
+                "content": data.get("body", data.get("html", "<p>Email content</p>"))
+            },
+            "toRecipients": [
+                {"emailAddress": {"address": email}} 
+                for email in (data.get("to", []) if isinstance(data.get("to"), list) else [data.get("to")] if data.get("to") else [])
+            ]
+        },
+        "saveToSentItems": True
+    }
+    
+    # Add CC if provided
+    if data.get("cc"):
+        cc_list = data.get("cc") if isinstance(data.get("cc"), list) else [data.get("cc")]
+        email["message"]["ccRecipients"] = [
+            {"emailAddress": {"address": cc}} for cc in cc_list
+        ]
+    
+    # Send the email
+    r = requests.post(f"{GRAPH_URL}/me/sendMail", headers=h, data=json.dumps(email))
+    
+    if not r.ok:
+        print(f"Failed to send email: {r.status_code} - {r.text}")
+        return jsonify({"error": "Failed to send email", "details": r.text}), r.status_code
+    
+    return jsonify({
+        "success": True,
+        "message": f"Email sent to {', '.join(data.get('to', []))}"
+    })
 # ----------------- Calendar/Meeting Routes -----------------
 
 @app.route("/api/calendar/daily-brief", methods=["GET"])
