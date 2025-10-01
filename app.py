@@ -942,11 +942,18 @@ Keep responses concise (2-3 sentences max).
 Language: {language}"""
     
     # Add family personalization
+    # Add family personalization WITH ALL INQUIRY DATA
     if family_context:
         child_name = family_context.get('child_name', '')
         parent_name = family_context.get('parent_name', '')
         age_group = family_context.get('age_group', '')
         entry_year = family_context.get('entry_year', '')
+        
+        # Get inquiry form details
+        specific_sports = family_context.get('specific_sports', [])
+        academic_interests = family_context.get('academic_interests', [])
+        activities = family_context.get('activities', [])
+        university_aspirations = family_context.get('university_aspirations', '')
         
         system_msg += f"""
 
@@ -955,7 +962,20 @@ You are speaking with {parent_name} about their child {child_name}.
 - Age group: {age_group}
 - Prospective entry: {entry_year}
 
-Reference their child naturally when relevant.
+{child_name}'s TOP SPORTS INTERESTS (in order of preference):"""
+        
+        if specific_sports:
+            for i, sport in enumerate(specific_sports, 1):
+                system_msg += f"\n  {i}. {sport}"
+        
+        system_msg += f"""
+
+ACADEMIC INTERESTS: {', '.join(academic_interests) if academic_interests else 'Not specified'}
+ACTIVITIES: {', '.join(activities) if activities else 'Not specified'}
+UNIVERSITY GOALS: {university_aspirations or 'Not specified'}
+
+When asked about {child_name}'s interests, reference these specific details!
+Example: "I can see {child_name} is particularly interested in {specific_sports[0] if specific_sports else 'sports'}..."
 """
     
     # Search knowledge base (if available)
