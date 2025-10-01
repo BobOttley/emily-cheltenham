@@ -871,7 +871,140 @@ def create_meeting():
 def embed():
     """Serve Emily chatbot for iframe embedding in prospectus"""
     return send_from_directory('.', 'index.html')
+@app.route("/ask", methods=["POST"])
+def ask():
+    """Main chatbot endpoint - handles text and voice questions"""
+    data = request.get_json() or {}
+    question = data.get("question", "").strip()
+    language = data.get("language", "en")
+    family_id = data.get("family_id")
     
+    if not question:
+        return jsonify({
+            "answer": "Please ask a question.",
+            "queries": ["fees", "admissions", "contact"],
+            "query_map": {}
+        })
+    
+    # Fetch family context from Cheltenham database
+    family_context = None
+    if family_id:
+        family_context = fetch_family_context(family_id)
+        print(f"✅ Loaded context for family: {family_id}")
+    
+    # Build personalized system prompt
+    system_msg = f"""You are Emily, the AI assistant for Cheltenham College.
+Be warm, helpful, and professional. Use British spelling.
+Keep responses concise (2-3 sentences max).
+Language: {language}"""
+    
+    # Add family personalization
+    if family_context:
+        child_name = family_context.get('child_name', '')
+        parent_name = family_context.get('parent_name', '')
+        age_group = family_context.get('age_group', '')
+        entry_year = family_context.get('entry_year', '')
+        
+        system_msg += f"""
+
+IMPORTANT CONTEXT:
+You are speaking with {parent_name} about their child {child_name}.
+- Age group: {age_group}
+- Prospective entry: {entry_year}
+
+Welcome them warmly by name and reference their child when relevant.
+Example: "Hello {parent_name}! I'd be delighted to help you learn more about Cheltenham College for {child_name}."
+"""
+    
+    # Search knowledge base (if available)
+    context_snippets = []
+    if len(DOC_EMBEDDINGS) > 0 and len(METADATA) > 0:
+        try:
+            # Simple keyword search
+            query_lower = question.lower()
+            for meta in METADATA[:20]:  # Check first 20 docs
+                text = meta.get("text", "").lower()
+                if any(word in text for word in query_lower.split()):
+                    context_snippets.append(meta.get("text", "")[:300])
+                    if len(context_snippets) >= 3:
+                        break
+        except Exception as e:
+            print(f"Knowledge search error: {e}")
+    
+    if context_snippets:
+        system_msg += f"\n\nRELEVANT INFORMATION:\n" + "\n".join(context_snippets[:2])
+    
+    # Call OpenAI
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": question}
+            ],
+            temperature=0.7,
+            max_tokens=300
+        )
+        
+        answer = response.choices[0].message.content
+        
+        # Return response with suggested follow-up queries
+        return jsonify({
+            "answer": answer,
+            "queries": ["fees", "admissions", "open", "contact", "prospectus"],
+            "query_map": {},
+            "family_recognized": bool(family_context)
+        })
+        
+    except Exception as e:
+        print(f"OpenAI error: {e}")
+        return jsonify({
+            "answer": "I apologize, but I'm having trouble right now. Please try again in a moment.",
+            "queries": ["fees", "admissions", "contact"]
+        })    
+
+@app.route("/realtime/tool/get_family_context", methods=["POST"])
+def get_family_context_tool():
+    """Tool endpoint for voice assistant to get family context"""
+    data = request.get_json() or {}
+    family_id = data.get("family_id")
+    
+    if not family_id:
+        return jsonify({"error": "No family_id provided"}), 400
+    
+    family_context = fetch_family_context(family_id)
+    
+    if not family_context:
+        return jsonify({"error": "Family not found"}), 404
+    
+    return jsonify({
+        "ok": True,
+        "parent_name": family_context.get("parent_name"),
+        "child_name": family_context.get("child_name"),
+        "age_group": family_context.get("age_group"),
+        "entry_year": family_context.get("entry_year"),
+        "language": family_context.get("language", "en")
+    })
+
+@app.route("/realtime/tool/get_open_days", methods=["POST"])
+def get_open_days_tool():
+    """Tool endpoint for open days information"""
+    # You can fetch this from a database or return static data
+    return jsonify({
+        "ok": True,
+        "events": [
+            {
+                "date": "2025-03-15",
+                "type": "Open Morning",
+                "time": "9:00 AM"
+            },
+            {
+                "date": "2025-05-10",
+                "type": "Open Day",
+                "time": "10:00 AM"
+            }
+        ]
+    })
 # ----------------- Voice/Realtime Routes -----------------
 @app.route("/api/knowledge/search", methods=["POST"])
 def search_knowledge():
