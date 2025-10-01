@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 from typing import Optional, Dict, Any, List, Tuple
 
-from flask import Flask, redirect, request, session, jsonify, render_template, make_response
+from flask import Flask, redirect, request, session, jsonify, render_template, make_response, send_from_directory
 from flask_cors import CORS
 from dotenv import load_dotenv
 from openai import OpenAI
