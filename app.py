@@ -1003,115 +1003,116 @@ ALWAYS be this specific and personal. Make every answer about {child_name}.
     
     if context_snippets:
         system_msg += f"\n\nRELEVANT INFORMATION:\n" + "\n".join(context_snippets[:2])
+    
     # Call OpenAI
-try:
-    print(f"🔍 SENDING TO OPENAI - First 1000 chars of prompt:")
-    print(system_msg[:1000])
-    
-    response = openai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": question}
-        ],
-        temperature=0.7,
-        max_tokens=300
-    )
-    
-    answer = response.choices[0].message.content
-    
-    # Generate context-aware follow-up questions based on inquiry data
-    suggested_queries = []
-    
-    if family_context:
-        specific_sports = family_context.get('specific_sports', [])
-        academic_interests = family_context.get('academic_interests', [])
-        activities = family_context.get('activities', [])
-        university_aspirations = family_context.get('university_aspirations', '')
-        boarding_preference = family_context.get('boarding_preference', '')
-        stage = family_context.get('stage', '')
+    try:
+        print(f"🔍 SENDING TO OPENAI - First 1000 chars of prompt:")
+        print(system_msg[:1000])
         
-        # Sport-specific questions
-        if specific_sports and len(specific_sports) > 0:
-            top_sport = specific_sports[0]
-            suggested_queries.append(f"Tell me about {top_sport} at Cheltenham")
-            if len(specific_sports) > 1:
-                suggested_queries.append(f"What about {specific_sports[1]}?")
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": question}
+            ],
+            temperature=0.7,
+            max_tokens=300
+        )
         
-        # Academic questions based on interests
-        if 'sciences' in academic_interests:
-            suggested_queries.append("What science facilities do you have?")
-        if 'languages' in academic_interests:
-            suggested_queries.append("Which languages can my child study?")
-        if 'humanities' in academic_interests:
-            suggested_queries.append("Tell me about your humanities teaching")
-        if 'arts' in academic_interests:
-            suggested_queries.append("What creative arts opportunities are there?")
+        answer = response.choices[0].message.content
         
-        # University-specific questions
-        if university_aspirations:
-            if 'Oxford' in university_aspirations or 'Cambridge' in university_aspirations:
-                suggested_queries.append("What Oxbridge preparation do you offer?")
-            elif 'Russell Group' in university_aspirations:
-                suggested_queries.append("What are your university destinations?")
-            elif 'International' in university_aspirations:
-                suggested_queries.append("Do you help with US university applications?")
+        # Generate context-aware follow-up questions based on inquiry data
+        suggested_queries = []
         
-        # Activity-based questions
-        if 'music' in activities:
-            suggested_queries.append("What music ensembles can students join?")
-        if 'leadership' in activities:
-            suggested_queries.append("What leadership opportunities exist?")
-        if 'ccf' in activities:
-            suggested_queries.append("Tell me about the CCF programme")
-        if 'drama' in activities:
-            suggested_queries.append("What drama productions do you stage?")
+        if family_context:
+            specific_sports = family_context.get('specific_sports', [])
+            academic_interests = family_context.get('academic_interests', [])
+            activities = family_context.get('activities', [])
+            university_aspirations = family_context.get('university_aspirations', '')
+            boarding_preference = family_context.get('boarding_preference', '')
+            stage = family_context.get('stage', '')
+            
+            # Sport-specific questions
+            if specific_sports and len(specific_sports) > 0:
+                top_sport = specific_sports[0]
+                suggested_queries.append(f"Tell me about {top_sport} at Cheltenham")
+                if len(specific_sports) > 1:
+                    suggested_queries.append(f"What about {specific_sports[1]}?")
+            
+            # Academic questions based on interests
+            if 'sciences' in academic_interests:
+                suggested_queries.append("What science facilities do you have?")
+            if 'languages' in academic_interests:
+                suggested_queries.append("Which languages can my child study?")
+            if 'humanities' in academic_interests:
+                suggested_queries.append("Tell me about your humanities teaching")
+            if 'arts' in academic_interests:
+                suggested_queries.append("What creative arts opportunities are there?")
+            
+            # University-specific questions
+            if university_aspirations:
+                if 'Oxford' in university_aspirations or 'Cambridge' in university_aspirations:
+                    suggested_queries.append("What Oxbridge preparation do you offer?")
+                elif 'Russell Group' in university_aspirations:
+                    suggested_queries.append("What are your university destinations?")
+                elif 'International' in university_aspirations:
+                    suggested_queries.append("Do you help with US university applications?")
+            
+            # Activity-based questions
+            if 'music' in activities:
+                suggested_queries.append("What music ensembles can students join?")
+            if 'leadership' in activities:
+                suggested_queries.append("What leadership opportunities exist?")
+            if 'ccf' in activities:
+                suggested_queries.append("Tell me about the CCF programme")
+            if 'drama' in activities:
+                suggested_queries.append("What drama productions do you stage?")
+            
+            # Boarding-specific questions
+            if boarding_preference == 'Full Boarding':
+                suggested_queries.append("What's boarding life like?")
+                suggested_queries.append("What do boarders do at weekends?")
+            elif boarding_preference == 'Day':
+                suggested_queries.append("What time does the school day run?")
+                suggested_queries.append("Can day students join evening activities?")
+            elif boarding_preference == 'Considering Both':
+                suggested_queries.append("What's the difference between boarding and day?")
+            
+            # Stage-specific questions
+            if stage == 'Upper':
+                suggested_queries.append("What A-Level subjects do you offer?")
+                suggested_queries.append("How does Sixth Form work?")
+            elif stage == 'Lower':
+                suggested_queries.append("What's Third Form like?")
+                suggested_queries.append("How do you support 13-year-olds?")
         
-        # Boarding-specific questions
-        if boarding_preference == 'Full Boarding':
-            suggested_queries.append("What's boarding life like?")
-            suggested_queries.append("What do boarders do at weekends?")
-        elif boarding_preference == 'Day':
-            suggested_queries.append("What time does the school day run?")
-            suggested_queries.append("Can day students join evening activities?")
-        elif boarding_preference == 'Considering Both':
-            suggested_queries.append("What's the difference between boarding and day?")
+        # Always include some core questions as fallbacks
+        core_queries = ["admissions process", "fees and scholarships", "arrange a visit", "contact admissions"]
         
-        # Stage-specific questions
-        if stage == 'Upper':
-            suggested_queries.append("What A-Level subjects do you offer?")
-            suggested_queries.append("How does Sixth Form work?")
-        elif stage == 'Lower':
-            suggested_queries.append("What's Third Form like?")
-            suggested_queries.append("How do you support 13-year-olds?")
-    
-    # Always include some core questions as fallbacks
-    core_queries = ["admissions process", "fees and scholarships", "arrange a visit", "contact admissions"]
-    
-    # Combine: prioritize personalized questions, then add core ones
-    if not suggested_queries:
-        suggested_queries = core_queries
-    else:
-        suggested_queries = suggested_queries[:4]
-        remaining_slots = 5 - len(suggested_queries)
-        suggested_queries.extend(core_queries[:remaining_slots])
-    
-    # Ensure we have exactly 5 suggestions
-    suggested_queries = list(dict.fromkeys(suggested_queries))[:5]
-    
-    return jsonify({
-        "answer": answer,
-        "queries": suggested_queries,
-        "query_map": {},
-        "family_recognized": bool(family_context)
-    })
-    
-except Exception as e:
-    print(f"OpenAI error: {e}")
-    return jsonify({
-        "answer": "I apologize, but I'm having trouble right now. Please try again in a moment.",
-        "queries": ["fees", "admissions", "contact"]
-    })
+        # Combine: prioritize personalized questions, then add core ones
+        if not suggested_queries:
+            suggested_queries = core_queries
+        else:
+            suggested_queries = suggested_queries[:4]
+            remaining_slots = 5 - len(suggested_queries)
+            suggested_queries.extend(core_queries[:remaining_slots])
+        
+        # Ensure we have exactly 5 suggestions
+        suggested_queries = list(dict.fromkeys(suggested_queries))[:5]
+        
+        return jsonify({
+            "answer": answer,
+            "queries": suggested_queries,
+            "query_map": {},
+            "family_recognized": bool(family_context)
+        })
+        
+    except Exception as e:
+        print(f"OpenAI error: {e}")
+        return jsonify({
+            "answer": "I apologise, but I'm having trouble right now. Please try again in a moment.",
+            "queries": ["fees", "admissions", "contact"]
+        })
 
 @app.route("/realtime/tool/get_family_context", methods=["POST"])
 def get_family_context_tool():
