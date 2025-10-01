@@ -84,11 +84,11 @@
 
   function applyConsentLocale(lang) {
     const t = i18n[lang] || i18n.en;
-    vcTitle.textContent = t.title;
-    vcDesc.textContent  = t.desc;
-    vcAgree.textContent = t.agree;
-    cancelBtn.textContent = t.cancel;
-    startBtn.textContent  = t.start;
+    if (vcTitle) vcTitle.textContent = t.title;
+    if (vcDesc) vcDesc.textContent  = t.desc;
+    if (vcAgree) vcAgree.textContent = t.agree;
+    if (cancelBtn) cancelBtn.textContent = t.cancel;
+    if (startBtn) startBtn.textContent  = t.start;
   }
 
   function syncLanguage(lang) {
@@ -196,7 +196,7 @@
   });
   window.addEventListener('beforeunload', teardownSession);
 
-  // === Voice session ===
+  // === Voice session with AUTO-GREETING ===
   async function startVoiceSession() {
     const sessRes = await fetch('/realtime/session', {
       method: 'POST',
@@ -231,12 +231,26 @@
 
     dc = pc.createDataChannel('oai-events');
     dc.onopen = () => {
+      console.log('🎤 DataChannel open - triggering automatic welcome greeting');
+      
+      // FIXED: Send an invisible user message to trigger Emily's personalized greeting
       sendEvent({
-        type: 'response.create',
-        response: {
-          instructions: `Please greet the user in their selected language (${currentLang}). Keep replies concise and helpful, and continue in this language unless they ask to switch.`
+        type: 'conversation.item.create',
+        item: {
+          type: 'message',
+          role: 'user',
+          content: [{
+            type: 'input_text',
+            text: 'Hello'  // Simple trigger that Emily will respond to with her custom greeting
+          }]
         }
       });
+      
+      // Immediately request Emily's response (this makes her speak first)
+      sendEvent({
+        type: 'response.create'
+      });
+      
       resetFallbackTimer(); // start watchdog after greeting request
     };
     dc.onmessage = onEventMessage;
@@ -405,10 +419,29 @@
     cancelFallbackTimer();
   }
 
+  // Extract family_id from URL
   const urlParams = new URLSearchParams(window.location.search);
   familyId = urlParams.get('family_id') || urlParams.get('id') || null;
 
-  console.log('Emily initialized with family_id:', familyId);
+  // Try localStorage as fallback (if Emily is on same domain)
+  if (!familyId) {
+    try {
+      const stored = localStorage.getItem('enquiryData');
+      if (stored) {
+        const data = JSON.parse(stored);
+        familyId = data.id;
+        console.log('✅ Family ID from localStorage:', familyId);
+      }
+    } catch (e) {
+      console.error('Failed to parse enquiryData:', e);
+    }
+  }
+
+  if (familyId) {
+    console.log('✅ Emily voice initialized with family_id:', familyId);
+  } else {
+    console.log('⚠️ Emily voice initialized without family_id');
+  }
 
   syncLanguage(currentLang);
 })();
