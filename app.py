@@ -1043,6 +1043,15 @@ def create_realtime_session():
 
     body = request.get_json(silent=True) or {}
     
+    # Get family_id from request
+    family_id = body.get("family_id")
+    
+    # Fetch family context if available
+    family_context = None
+    if family_id:
+        family_context = fetch_family_context(family_id)
+        print(f"✅ Voice session for family: {family_id}")
+    
     user = get_user_info()
     user_name = user.get("displayName", "User") if user else "User"
     
@@ -1050,18 +1059,34 @@ def create_realtime_session():
     voice = body.get("voice", "shimmer")
     language = body.get("language", "en")
 
-    instructions = f"""You are Emily, the administrative assistant for Cheltenham College.
-    You're helping {user_name} with admin tasks.
-    Be warm, professional, and helpful. Use British spelling and expressions.
-    
-    IMPORTANT: When asked to create or send emails:
-    - You can create DRAFT emails that the user must review and send manually
-    - Always say you're creating a "draft" not "sending" the email
-    - Tell the user to check their Outlook drafts folder
-    - Never claim to have "sent" an email - you can only create drafts
-    
-    Keep responses concise and conversational.
-    Language: {language}"""
+    # Build instructions with family context
+    instructions = f"""You are Emily, the AI assistant for Cheltenham College.
+Be warm, helpful, and professional. Use British spelling and expressions.
+Keep responses concise and conversational.
+Language: {language}
+
+IMPORTANT: When asked to create or send emails:
+- You can create DRAFT emails that the user must review and send manually
+- Always say you're creating a "draft" not "sending" the email
+- Tell the user to check their Outlook drafts folder
+- Never claim to have "sent" an email - you can only create drafts"""
+
+    if family_context:
+        child_name = family_context.get('child_name', '')
+        parent_name = family_context.get('parent_name', '')
+        age_group = family_context.get('age_group', '')
+        entry_year = family_context.get('entry_year', '')
+        
+        instructions += f"""
+
+IMPORTANT CONTEXT:
+You are speaking with {parent_name} about their child {child_name}.
+- Age group: {age_group}
+- Prospective entry: {entry_year}
+
+Welcome them warmly by name and reference their child when relevant.
+Example: "Hello {parent_name}! I'd be delighted to help you with {child_name}'s journey to Cheltenham College."
+"""
 
     try:
         response = requests.post(
@@ -1207,62 +1232,6 @@ def create_realtime_session():
     except Exception as e:
         print(f"Realtime session error: {e}")
         return jsonify({"error": str(e)}), 500
-
-# ----------------- Contact Management Routes -----------------
-
-@app.route('/api/contacts/create', methods=['POST'])
-def create_contact():
-    """Create a new contact in Outlook"""
-    h = _auth_headers()
-    if not h:
-        return jsonify({'error': 'Not authenticated'}), 401
-    
-    data = request.get_json() or {}
-    
-    # Build contact data for Microsoft Graph
-    contact_data = {
-        "givenName": data.get('firstName', ''),
-        "surname": data.get('lastName', ''),
-        "emailAddresses": [],
-        "businessPhones": [],
-        "companyName": data.get('company', ''),
-        "jobTitle": data.get('jobTitle', '')
-    }
-    
-    # Add email if provided
-    if data.get('email'):
-        contact_data["emailAddresses"] = [{
-            "address": data.get('email'),
-            "name": f"{data.get('firstName', '')} {data.get('lastName', '')}".strip()
-        }]
-    
-    # Add phone if provided
-    if data.get('phone'):
-        contact_data["businessPhones"] = [data.get('phone')]
-    
-    # Create the contact
-    try:
-        response = requests.post(
-            f'{GRAPH_URL}/me/contacts',
-            headers=h,
-            data=json.dumps(contact_data)
-        )
-        
-        if response.ok:
-            created_contact = response.json()
-            return jsonify({
-                'success': True,
-                'contactId': created_contact.get('id'),
-                'displayName': created_contact.get('displayName'),
-                'message': f"Contact created for {created_contact.get('displayName', 'contact')}"
-            })
-        else:
-            print(f"Failed to create contact: {response.status_code} - {response.text}")
-            return jsonify({'error': 'Failed to create contact'}), response.status_code
-            
-    except Exception as e:
-        print(f"Error creating contact: {e}")
-        return jsonify({'error': str(e)}), 500
 
 # ----------------- Family Context Route -----------------
 
