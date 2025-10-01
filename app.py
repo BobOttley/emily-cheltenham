@@ -883,7 +883,23 @@ if question == "__WELCOME__" and family_id:
     family_context = fetch_family_context(family_id)
     if family_context:
         child_name = family_context.get('child_name', '').strip()
-        family_surname = family_context.get('family_surname', '').strip()
+        if family_surname:
+            greeting = f"On behalf of Cheltenham College and the admissions team, I would like to extend a warm welcome to {child_name} and the {family_surname} family. How may I assist you today?"
+        else:
+            greeting = f"On behalf of Cheltenham College and the admissions team, I would like to extend a warm welcome to {child_name}. How may I assist you today?"
+        
+        instructions += f"""
+
+IMPORTANT CONTEXT:
+You are speaking with {parent_name} about their child {child_name}.
+- Age group: {age_group}
+- Prospective entry: {entry_year}
+
+CRITICAL: You MUST greet the user IMMEDIATELY when the conversation starts. Do not wait for them to speak first.
+Your FIRST action must be to say: '{greeting}'
+
+After this greeting, listen and respond naturally to their questions about Cheltenham College.
+"""
         
         # Build proper welcome message
         if child_name and family_surname:
