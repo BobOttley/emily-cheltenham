@@ -354,7 +354,7 @@ def api_status():
         
         if r.ok:
             me = r.json()
-            print(f"Graph API /me response: {me}")  # Debug logging
+            print(f"Graph API /me response: {me}")
             
             # Extract user details with multiple fallbacks
             display_name = (
@@ -376,7 +376,6 @@ def api_status():
             
             # If no display name but we have an email, create one from email
             if not display_name and email:
-                # john.doe@company.com -> John Doe
                 email_name = email.split('@')[0]
                 display_name = ' '.join(
                     word.capitalize() 
@@ -408,12 +407,10 @@ def api_status():
         else:
             print(f"Graph API error: {r.status_code} - {r.text}")
             
-            # If we get a 401, token might be invalid
             if r.status_code == 401:
                 session.clear()
                 return jsonify({"authenticated": False})
             
-            # For other errors, return authenticated with fallback user
             return jsonify({
                 "authenticated": True,
                 "user": {
@@ -425,7 +422,6 @@ def api_status():
             
     except Exception as e:
         print(f"Error getting user info: {e}")
-        # Don't log out on error - might be temporary
         return jsonify({
             "authenticated": True,
             "user": {
@@ -456,7 +452,7 @@ def login():
         "redirect_uri": REDIRECT_URI,
         "response_mode": "query",
         "scope": SCOPE_STR,
-        "prompt": "select_account"  # Force account selection
+        "prompt": "select_account"
     }
     q = "&".join([f"{k}={quote(v)}" for k, v in params.items()])
     auth_url = f"{AUTH_URL}?{q}"
@@ -528,7 +524,6 @@ def get_inbox():
         
         messages = r.json().get("value", [])
         
-        # Process messages into summaries
         summaries = []
         for msg in messages:
             from_address = "unknown"
@@ -542,7 +537,7 @@ def get_inbox():
                 "received": msg.get("receivedDateTime", ""),
                 "isRead": msg.get("isRead", False),
                 "hasAttachments": msg.get("hasAttachments", False),
-                "bullets": [msg.get("subject", "No subject")]  # Simplified for now
+                "bullets": [msg.get("subject", "No subject")]
             })
         
         return jsonify({"summaries": summaries, "total": len(summaries)})
@@ -560,7 +555,6 @@ def create_email_draft():
     
     data = request.get_json() or {}
     
-    # Build the draft message
     draft = {
         "subject": data.get("subject", "Draft Email"),
         "body": {
@@ -574,7 +568,6 @@ def create_email_draft():
         "isDraft": True
     }
     
-    # Create the draft
     r = requests.post(f"{GRAPH_URL}/me/messages", headers=h, data=json.dumps(draft))
     
     if not r.ok:
@@ -597,12 +590,10 @@ def create_reply_draft_ai(message_id):
     if not h:
         return jsonify({"error": "Not authenticated"}), 401
     
-    # Get current user info
     user_info = _me(h)
     user_email = user_info.get("mail") or user_info.get("userPrincipalName")
     user_name = user_info.get("displayName", "User")
     
-    # Read original message with full details
     r = requests.get(
         f"{GRAPH_URL}/me/messages/{message_id}?$select=*",
         headers=h
@@ -612,26 +603,20 @@ def create_reply_draft_ai(message_id):
     
     original_msg = r.json()
     
-    # Extract all recipients for proper reply
     sender = original_msg.get("from", {}).get("emailAddress", {})
     to_recipients = original_msg.get("toRecipients", [])
     cc_recipients = original_msg.get("ccRecipients", [])
     
-    # Determine if user was the sender or recipient
     user_is_sender = sender.get("address", "").lower() == user_email.lower()
     
-    # Build reply recipients list
     reply_to_list = []
     reply_cc_list = []
     
     if user_is_sender:
-        # User sent the original - reply to original recipients
         reply_to_list = [r["emailAddress"]["address"] for r in to_recipients]
         reply_cc_list = [r["emailAddress"]["address"] for r in cc_recipients]
     else:
-        # User received the email - reply to sender and CC others
         reply_to_list = [sender.get("address")]
-        # Add other recipients to CC, excluding the user
         for recipient in to_recipients:
             email = recipient["emailAddress"]["address"]
             if email.lower() != user_email.lower() and email not in reply_to_list:
@@ -641,14 +626,11 @@ def create_reply_draft_ai(message_id):
             if email.lower() != user_email.lower() and email not in reply_cc_list:
                 reply_cc_list.append(email)
     
-    # Extract email content and subject
     subject = original_msg.get("subject", "")
     original_text = _extract_plaintext_from_graph_msg(original_msg)
     
-    # Get conversation ID to maintain thread
     conversation_id = original_msg.get("conversationId")
     
-    # Prepare context for AI
     email_context = {
         "user_name": user_name,
         "user_email": user_email,
@@ -661,7 +643,6 @@ def create_reply_draft_ai(message_id):
         "conversation_id": conversation_id
     }
     
-    # Generate AI reply with proper context
     system_msg = f"""You are Emily, an AI assistant helping {user_name} draft email replies.
     
     IMPORTANT CONTEXT:
@@ -701,7 +682,6 @@ Remember: You are helping {user_name} draft THEIR reply, not replying as Emily."
     except Exception as e:
         return jsonify({"error": f"OpenAI error: {e}"}), 500
     
-    # Create reply draft in Outlook (preserves thread)
     r = requests.post(
         f"{GRAPH_URL}/me/messages/{message_id}/createReply",
         headers=h
@@ -712,7 +692,6 @@ Remember: You are helping {user_name} draft THEIR reply, not replying as Emily."
     draft = r.json()
     draft_id = draft.get("id")
     
-    # Update draft with AI content and proper recipients
     patch = {
         "body": {
             "contentType": "HTML",
@@ -720,8 +699,6 @@ Remember: You are helping {user_name} draft THEIR reply, not replying as Emily."
         }
     }
     
-    # Only update recipients if we need to add CCs
-    # (createReply already sets the To field correctly)
     if reply_cc_list:
         patch["ccRecipients"] = [
             {"emailAddress": {"address": email}}
@@ -796,14 +773,12 @@ def find_meeting_times():
     if not start or not end:
         return jsonify({"error": "timeWindowStart and timeWindowEnd required"}), 400
     
-    # Default to self if no attendees
     if not attendees:
         me = _me(h)
         my_mail = me.get("mail") or me.get("userPrincipalName")
         if my_mail:
             attendees = [my_mail]
     
-    # Try findMeetingTimes API
     body = {
         "attendees": [
             {"type": "required", "emailAddress": {"address": a}} for a in attendees
@@ -862,7 +837,6 @@ def create_meeting():
         event["isOnlineMeeting"] = True
         event["onlineMeetingProvider"] = "teamsForBusiness"
     
-    # Send invitations
     r = requests.post(
         f"{GRAPH_URL}/me/events?sendInvitations=true",
         headers=h,
@@ -881,10 +855,12 @@ def create_meeting():
         "joinUrl": join_url,
         "subject": created.get("subject")
     })
+
 @app.route("/embed")
 def embed():
     """Serve Emily chatbot for iframe embedding in prospectus"""
     return send_from_directory('.', 'index.html')
+
 @app.route("/ask", methods=["POST"])
 def ask():
     """Main chatbot endpoint - handles text and voice questions"""
@@ -898,8 +874,8 @@ def ask():
         if family_id:
             family_context = fetch_family_context(family_id)
             if family_context:
-                child_name = family_context.get('child_name', '').strip()  # "George Smith"
-                family_surname_full = family_context.get('family_surname', '').strip()  # "the Smith Family"
+                child_name = family_context.get('child_name', '').strip()
+                family_surname_full = family_context.get('family_surname', '').strip()
                 
                 if child_name and family_surname_full:
                     welcome_msg = f"On behalf of Cheltenham College and the admissions team, I'd like to extend a warm welcome to {child_name} and {family_surname_full}. How may I assist you today?"
@@ -914,14 +890,12 @@ def ask():
                     "query_map": {}
                 })
         
-        # Default welcome if no family_id
         return jsonify({
             "answer": "Hi there! Ask me anything about Cheltenham College.",
             "queries": ["fees", "admissions", "open", "contact", "prospectus"],
             "query_map": {}
         })
     
-    # Skip empty questions
     if not question:
         return jsonify({
             "answer": "Please ask a question.",
@@ -939,9 +913,16 @@ def ask():
     system_msg = f"""You are Emily, the AI assistant for Cheltenham College.
 Be warm, helpful, and professional. Use British spelling.
 Keep responses concise (2-3 sentences max).
-Language: {language}"""
+Language: {language}
+
+CRITICAL BEHAVIOR:
+- Be proactive - don't just answer, guide the conversation
+- After every answer, suggest a related follow-up based on their child's specific interests
+- Connect your answers to what you know about their child
+- End most responses with "Would you like to know about..." or "I can also tell you about..."
+- Make parents feel you understand their child's unique profile
+"""
     
-    # Add family personalization
     # Add family personalization WITH ALL INQUIRY DATA
     if family_context:
         child_name = family_context.get('child_name', '')
@@ -954,28 +935,56 @@ Language: {language}"""
         academic_interests = family_context.get('academic_interests', [])
         activities = family_context.get('activities', [])
         university_aspirations = family_context.get('university_aspirations', '')
+        boarding_preference = family_context.get('boarding_preference', '')
+        priorities = family_context.get('priorities', {})
         
         system_msg += f"""
 
-IMPORTANT CONTEXT:
-You are speaking with {parent_name} about their child {child_name}.
-- Age group: {age_group}
-- Prospective entry: {entry_year}
+FAMILY PROFILE - YOU MUST USE THIS INFORMATION:
+Parent: {parent_name}
+Child: {child_name}
+Age group: {age_group}
+Entry year: {entry_year}
+Boarding: {boarding_preference}
 
-{child_name}'s TOP SPORTS INTERESTS (in order of preference):"""
+{child_name}'S SPECIFIC INTERESTS:"""
         
         if specific_sports:
+            system_msg += f"\nTOP SPORTS (ranked):"
             for i, sport in enumerate(specific_sports, 1):
                 system_msg += f"\n  {i}. {sport}"
         
+        if academic_interests:
+            system_msg += f"\nACADEMIC INTERESTS: {', '.join(academic_interests)}"
+        
+        if activities:
+            system_msg += f"\nACTIVITIES: {', '.join(activities)}"
+        
+        if university_aspirations:
+            system_msg += f"\nUNIVERSITY GOAL: {university_aspirations}"
+        
+        if priorities:
+            system_msg += f"\nFAMILY PRIORITIES: Academic={priorities.get('academic', 2)}/3, Sports={priorities.get('sports', 2)}/3, Pastoral={priorities.get('pastoral', 2)}/3"
+        
         system_msg += f"""
 
-ACADEMIC INTERESTS: {', '.join(academic_interests) if academic_interests else 'Not specified'}
-ACTIVITIES: {', '.join(activities) if activities else 'Not specified'}
-UNIVERSITY GOALS: {university_aspirations or 'Not specified'}
+HOW TO USE THIS PROFILE:
+1. When answering ANY question, link it to {child_name}'s specific interests
+2. Proactively mention relevant programmes based on their sports/academics
+3. Reference their university goals when discussing academics
+4. Tailor boarding information to their preference
+5. Always end with a personalized follow-up question
 
-When asked about {child_name}'s interests, reference these specific details!
-Example: "I can see {child_name} is particularly interested in {specific_sports[0] if specific_sports else 'sports'}..."
+EXAMPLES OF GOOD RESPONSES:
+Question: "Tell me about your facilities"
+Bad: "We have excellent facilities including sports halls and science labs."
+Good: "We have excellent facilities - particularly for {specific_sports[0] if specific_sports else 'sports'}, which I see is {child_name}'s top sport. Our {specific_sports[0] if specific_sports else 'sports'} programme includes [details]. Given {child_name}'s also interested in {academic_interests[0] if academic_interests else 'academics'}, would you like to hear about our science labs?"
+
+Question: "What about university preparation?"
+Bad: "We offer extensive university preparation support."
+Good: "Since {child_name} is aiming for {university_aspirations or 'university'}, you'll be interested in our dedicated Oxbridge/Russell Group preparation. We achieved [stats]. I can also tell you about how our {specific_sports[0] if specific_sports else 'sports'} programme fits with university applications - would that help?"
+
+ALWAYS be this specific and personal. Make every answer about {child_name}.
 """
     
     # Search knowledge base (if available)
@@ -1020,7 +1029,7 @@ Example: "I can see {child_name} is particularly interested in {specific_sports[
             boarding_preference = family_context.get('boarding_preference', '')
             stage = family_context.get('stage', '')
             
-            # Sport-specific questions (top priority based on their rankings)
+            # Sport-specific questions
             if specific_sports and len(specific_sports) > 0:
                 top_sport = specific_sports[0]
                 suggested_queries.append(f"Tell me about {top_sport} at Cheltenham")
@@ -1081,12 +1090,11 @@ Example: "I can see {child_name} is particularly interested in {specific_sports[
         if not suggested_queries:
             suggested_queries = core_queries
         else:
-            # Limit personalized to 3-4, then add 1-2 core queries
             suggested_queries = suggested_queries[:4]
             remaining_slots = 5 - len(suggested_queries)
             suggested_queries.extend(core_queries[:remaining_slots])
         
-        # Ensure we have exactly 5 suggestions (or fewer if not enough unique ones)
+        # Ensure we have exactly 5 suggestions
         suggested_queries = list(dict.fromkeys(suggested_queries))[:5]
         
         return jsonify({
@@ -1129,7 +1137,6 @@ def get_family_context_tool():
 @app.route("/realtime/tool/get_open_days", methods=["POST"])
 def get_open_days_tool():
     """Tool endpoint for open days information"""
-    # You can fetch this from a database or return static data
     return jsonify({
         "ok": True,
         "events": [
@@ -1145,7 +1152,7 @@ def get_open_days_tool():
             }
         ]
     })
-# ----------------- Voice/Realtime Routes -----------------
+
 @app.route("/api/knowledge/search", methods=["POST"])
 def search_knowledge():
     """Search the school knowledge base"""
@@ -1155,7 +1162,6 @@ def search_knowledge():
     if not query or len(DOC_EMBEDDINGS) == 0:
         return jsonify({"results": [], "message": "No results found"})
     
-    # Simple keyword search in metadata
     results = []
     query_lower = query.lower()
     
@@ -1163,15 +1169,14 @@ def search_knowledge():
         text = meta.get("text", "").lower()
         if query_lower in text:
             results.append({
-                "text": meta.get("text", "")[:500],  # First 500 chars
+                "text": meta.get("text", "")[:500],
                 "relevance": text.count(query_lower)
             })
     
-    # Sort by relevance
     results.sort(key=lambda x: x["relevance"], reverse=True)
     
     return jsonify({
-        "results": results[:5],  # Top 5 results
+        "results": results[:5],
         "count": len(results)
     })
     
@@ -1184,10 +1189,8 @@ def create_realtime_session():
 
     body = request.get_json(silent=True) or {}
     
-    # Get family_id from request
     family_id = body.get("family_id")
     
-    # Fetch family context if available
     family_context = None
     if family_id:
         family_context = fetch_family_context(family_id)
@@ -1200,7 +1203,6 @@ def create_realtime_session():
     voice = body.get("voice", "shimmer")
     language = body.get("language", "en")
 
-    # Build instructions with family context
     instructions = f"""You are Emily, the AI assistant for Cheltenham College.
 Be warm, helpful, and professional. Use British spelling and expressions.
 Keep responses concise and conversational.
@@ -1213,13 +1215,12 @@ IMPORTANT: When asked to create or send emails:
 - Never claim to have "sent" an email - you can only create drafts"""
 
     if family_context:
-        child_name = family_context.get('child_name', '').strip()  # "George Smith"
-        family_surname_full = family_context.get('family_surname', '').strip()  # "the Smith Family"
+        child_name = family_context.get('child_name', '').strip()
+        family_surname_full = family_context.get('family_surname', '').strip()
         parent_name = family_context.get('parent_name', '').strip()
         age_group = family_context.get('age_group', '')
         entry_year = family_context.get('entry_year', '')
         
-        # Use child_name (already clean) + family_surname_full (for personalization)
         if child_name and family_surname_full:
             greeting = f"On behalf of Cheltenham College and the admissions team, I would like to extend a warm welcome to {child_name} and {family_surname_full}. How may I assist you today?"
         elif child_name:
@@ -1384,8 +1385,6 @@ After this greeting, respond naturally to their questions.
         print(f"Realtime session error: {e}")
         return jsonify({"error": str(e)}), 500
 
-# ----------------- Family Context Route -----------------
-
 @app.route('/family/<family_id>', methods=['GET'])
 def get_family(family_id):
     """Get family context from Cheltenham inquiries database"""
@@ -1398,12 +1397,9 @@ def get_family(family_id):
     
     return jsonify({"ok": True, "family": ctx})
 
-# ----------------- Main -----------------
-
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     
-    # Check if running on Render (production) or locally (development)
     is_render = os.getenv("RENDER") == "true"
     
     print(f"🚀 Emily for Cheltenham College starting on port {port}")
@@ -1411,15 +1407,13 @@ if __name__ == "__main__":
     print(f"📋 Scopes: {SCOPE_STR}")
     
     if is_render:
-        # Production on Render - no SSL, bind to 0.0.0.0
         print(f"🌐 Running on Render (production)")
         app.run(
-            host="0.0.0.0",  # Required for Render
+            host="0.0.0.0",
             port=port,
             debug=False
         )
     else:
-        # Local development - use SSL for voice features
         debug = os.getenv("FLASK_ENV") == "development"
         cert_file, key_file = create_self_signed_cert()
         
