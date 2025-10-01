@@ -175,14 +175,31 @@
   });
 
   pauseBtn?.addEventListener('click', () => {
-    if (!micStream) return;
-    const track = micStream.getAudioTracks()[0];
-    if (!track) return;
-    track.enabled = !track.enabled;
-    isPaused = !track.enabled;
-    pauseBtn.textContent = isPaused ? 'Resume' : 'Pause';
-    showIndicator(isPaused ? 'Paused' : 'Listening…');
-  });
+  if (!micStream) return;
+  const track = micStream.getAudioTracks()[0];
+  if (!track) return;
+  
+  // Toggle pause state
+  isPaused = !isPaused;
+  
+  // Pause/resume microphone
+  track.enabled = !isPaused;
+  
+  // Pause/resume Emily's audio output
+  if (aiAudio) {
+    if (isPaused) {
+      aiAudio.pause();
+      aiAudio.muted = true;
+    } else {
+      aiAudio.muted = false;
+      aiAudio.play().catch(()=>{});
+    }
+  }
+  
+  // Update UI
+  pauseBtn.textContent = isPaused ? 'Resume' : 'Pause';
+  showIndicator(isPaused ? 'Paused' : 'Listening…');
+});
 
   endBtn?.addEventListener('click', () => {
     teardownSession();
