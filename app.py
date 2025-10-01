@@ -373,7 +373,11 @@ def callback():
     except Exception as e:
         print(f"Token exchange error: {e}")
         return f"Token exchange failed: {e}", 500
-
+@app.route("/embed")
+def embed():
+    """Serve the chat avatar for embedding"""
+    family_id = request.args.get('family_id', '')
+    return render_template('index.html', family_id=family_id)
 @app.route("/logout", methods=["POST"])
 def logout():
     """Sign out user"""
