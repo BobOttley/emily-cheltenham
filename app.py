@@ -88,9 +88,8 @@ app.config['SESSION_COOKIE_NAME'] = 'emily_session'
 CORS(app, supports_credentials=True)
 
 # Load school knowledge base embeddings (if available)
-EMBEDDINGS_PATH = os.path.join(os.path.dirname(__file__), "doc_embeddings.pkl")
-METADATA_PATH = os.path.join(os.path.dirname(__file__), "metadata.pkl")
-
+EMBEDDINGS_PATH = os.path.join(os.path.dirname(__file__), "kb_chunks", "doc_embeddings.pkl")
+METADATA_PATH = os.path.join(os.path.dirname(__file__), "kb_chunks", "metadata.pkl")
 try:
     with open(EMBEDDINGS_PATH, 'rb') as f:
         DOC_EMBEDDINGS = pickle.load(f)
