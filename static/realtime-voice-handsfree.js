@@ -68,12 +68,12 @@
   // Localisation for consent
   const i18n = {
     en: { title:'Enable Emily (voice)', desc:'To chat by voice, we need one-time permission to use your microphone and play audio responses.', agree:'I agree to voice processing for this session.', cancel:'Not now', start:'Start conversation' },
-    fr: { title:'Activer Emily (voix)', desc:'Pour discuter à la voix, nous avons besoin d'une autorisation unique pour utiliser votre microphone et lire les réponses audio.', agree:'J'accepte le traitement vocal pour cette session.', cancel:'Pas maintenant', start:'Commencer la conversation' },
+    fr: { title:'Activer Emily (voix)', desc:'Pour discuter à la voix, nous avons besoin d\'une autorisation unique pour utiliser votre microphone et lire les réponses audio.', agree:'J\'accepte le traitement vocal pour cette session.', cancel:'Pas maintenant', start:'Commencer la conversation' },
     es: { title:'Activar Emily (voz)', desc:'Para hablar por voz, necesitamos permiso único para usar tu micrófono y reproducir respuestas de audio.', agree:'Acepto el procesamiento de voz para esta sesión.', cancel:'Ahora no', start:'Iniciar conversación' },
     de: { title:'Emily (Sprache) aktivieren', desc:'Für die Sprachfunktion benötigen wir einmalige Berechtigung für Ihr Mikrofon und die Audiowiedergabe.', agree:'Ich stimme der Sprachverarbeitung für diese Sitzung zu.', cancel:'Nicht jetzt', start:'Konversation starten' },
     zh: { title:'启用 Emily（语音）', desc:'要进行语音聊天，我们需要一次性授权使用您的麦克风并播放音频回复。', agree:'我同意在本次会话中进行语音处理。', cancel:'暂不', start:'开始对话' },
     ar: { title:'تفعيل إميلي (صوت)', desc:'للدردشة بالصوت، نحتاج إلى إذن لمرة واحدة لاستخدام الميكروفون وتشغيل الردود الصوتية.', agree:'أوافق على معالجة الصوت لهذه الجلسة.', cancel:'ليس الآن', start:'بدء المحادثة' },
-    it: { title:'Abilita Emily (voce)', desc:'Per parlare con la voce, serve un'autorizzazione una tantum per usare il microfono e riprodurre risposte audio.', agree:'Accetto l'elaborazione vocale per questa sessione.', cancel:'Non ora', start:'Avvia conversazione' },
+    it: { title:'Abilita Emily (voce)', desc:'Per parlare con la voce, serve un\'autorizzazione una tantum per usare il microfono e riprodurre risposte audio.', agree:'Accetto l\'elaborazione vocale per questa sessione.', cancel:'Non ora', start:'Avvia conversazione' },
     ru: { title:'Включить Emily (голос)', desc:'Чтобы общаться голосом, нам нужно разовое разрешение на использование вашего микрофона и воспроизведение аудиоответов.', agree:'Я согласен на обработку голоса в этом сеансе.', cancel:'Не сейчас', start:'Начать разговор' }
   };
 
