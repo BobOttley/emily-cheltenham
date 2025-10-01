@@ -205,6 +205,7 @@
         model: 'gpt-4o-realtime-preview',
         voice: voiceByLang[currentLang] || 'shimmer',
         language: currentLang
+        family_id: familyId
       })
     });
     if (!sessRes.ok) throw new Error('Failed to create realtime session: ' + (await sessRes.text().catch(()=>'')));
