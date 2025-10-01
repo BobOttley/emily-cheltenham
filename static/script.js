@@ -12,6 +12,8 @@ const CHATBOT_ORIGIN = window.PENAI_CHATBOT_ORIGIN || "http://localhost:5001";
 
 // === Extract family_id from URL or localStorage ===
 let FAMILY_ID = new URLSearchParams(window.location.search).get('family_id');
+
+// If not in URL, try localStorage (only works if Emily is on same domain)
 if (!FAMILY_ID) {
   try {
     const stored = localStorage.getItem('enquiryData');
@@ -23,6 +25,12 @@ if (!FAMILY_ID) {
   } catch (e) {
     console.error('Failed to parse enquiryData:', e);
   }
+}
+
+if (FAMILY_ID) {
+  console.log('✅ Family ID loaded:', FAMILY_ID);
+} else {
+  console.log('⚠️ No family ID found');
 }
 
 // === 1) Fetch shim: route same-origin paths to chatbot backend when site + bot are separate ===
