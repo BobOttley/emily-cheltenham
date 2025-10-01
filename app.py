@@ -374,6 +374,13 @@ def callback():
         print(f"Token exchange error: {e}")
         return f"Token exchange failed: {e}", 500
 
+@app.route("/embed")
+def embed():
+    """Serve Emily for embedding in prospectus"""
+    family_id = request.args.get('family_id', '')
+    # Just serve the main interface
+    return render_template("index.html", family_id=family_id)
+
 @app.route("/logout", methods=["POST"])
 def logout():
     """Sign out user"""
