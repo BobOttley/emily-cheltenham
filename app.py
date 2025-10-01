@@ -75,8 +75,11 @@ app.config['SESSION_COOKIE_NAME'] = 'emily_cheltenham_session'
 CORS(app, supports_credentials=True)
 
 # Load Cheltenham College knowledge base (if available)
-EMBEDDINGS_PATH = os.path.join(os.path.dirname(__file__), "doc_embeddings.pkl")
-METADATA_PATH = os.path.join(os.path.dirname(__file__), "metadata.pkl")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+EMBEDDINGS_PATH = os.path.join(BASE_DIR, "kb_chunks", "doc_embeddings.pkl")
+METADATA_PATH = os.path.join(BASE_DIR, "kb_chunks", "metadata.pkl")
+
+print(f"Looking for embeddings at: {EMBEDDINGS_PATH}")
 
 try:
     with open(EMBEDDINGS_PATH, 'rb') as f:
@@ -85,7 +88,8 @@ try:
         METADATA = pickle.load(f)
     print(f"✅ Loaded {len(DOC_EMBEDDINGS)} knowledge base embeddings")
 except Exception as e:
-    print(f"⚠️ Could not load embeddings: {e}")
+    # Knowledge base is optional - app works fine without it
+    print(f"ℹ️  Knowledge base not loaded: {e}")
     DOC_EMBEDDINGS = []
     METADATA = []
 
