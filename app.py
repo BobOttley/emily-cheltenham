@@ -1003,7 +1003,11 @@ ALWAYS be this specific and personal. Make every answer about {child_name}.
     
     if context_snippets:
         system_msg += f"\n\nRELEVANT INFORMATION:\n" + "\n".join(context_snippets[:2])
+    try:
+    print(f"🔍 SENDING TO OPENAI - First 1000 chars of prompt:")
+    print(system_msg[:1000])
     
+    response = openai_client.chat.completions.create(
     # Call OpenAI
     try:
         response = openai_client.chat.completions.create(
