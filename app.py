@@ -280,16 +280,21 @@ def fetch_family_context(family_id: str) -> Optional[Dict[str, Any]]:
                 cols = [d.name for d in cur.description]
                 data = dict(zip(cols, row))
                 
-                # FIXED: Build child name properly - just first name and surname
                 first_name = (data.get('first_name') or '').strip()
-                family_surname = (data.get('family_surname') or '').strip()
-                child_name = f"{first_name} {family_surname}".strip() if first_name and family_surname else first_name or family_surname or None
+                family_surname_full = (data.get('family_surname') or '').strip()  # "the Smith Family"
+                
+                # Extract just surname for child's name: "the Smith Family" -> "Smith"
+                surname_only = family_surname_full.replace('the ', '').replace('The ', '').replace(' Family', '').replace(' family', '').strip()
+                
+                # Build child name with JUST the surname
+                child_name = f"{first_name} {surname_only}".strip() if first_name and surname_only else first_name or surname_only or None
                 
                 return {
                     "family_id": data.get("family_id"),
-                    "child_name": child_name,
-                    "first_name": first_name,
-                    "family_surname": family_surname,
+                    "child_name": child_name,  # "George Smith"
+                    "first_name": first_name,  # "George"
+                    "family_surname": family_surname_full,  # "the Smith Family" (keep original for greeting)
+                    "surname_only": surname_only,  # "Smith" (extracted)
                     "age_group": data.get("age_group"),
                     "entry_year": data.get("entry_year"),
                     "parent_name": data.get("parent_name"),
