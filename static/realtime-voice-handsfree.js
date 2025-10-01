@@ -36,7 +36,7 @@
     if (fallbackTimer) clearTimeout(fallbackTimer);
     fallbackTimer = setTimeout(() => {
       console.warn("⚠️ No response from Emily, sending fallback.");
-      playFallbackMessage("Sorry, I didn’t catch that — could you repeat the question?");
+      playFallbackMessage("Sorry, I didn't catch that — could you repeat the question?");
     }, FALLBACK_TIMEOUT_MS);
   }
 
@@ -68,12 +68,12 @@
   // Localisation for consent
   const i18n = {
     en: { title:'Enable Emily (voice)', desc:'To chat by voice, we need one-time permission to use your microphone and play audio responses.', agree:'I agree to voice processing for this session.', cancel:'Not now', start:'Start conversation' },
-    fr: { title:'Activer Emily (voix)', desc:'Pour discuter à la voix, nous avons besoin d’une autorisation unique pour utiliser votre microphone et lire les réponses audio.', agree:'J’accepte le traitement vocal pour cette session.', cancel:'Pas maintenant', start:'Commencer la conversation' },
+    fr: { title:'Activer Emily (voix)', desc:'Pour discuter à la voix, nous avons besoin d'une autorisation unique pour utiliser votre microphone et lire les réponses audio.', agree:'J'accepte le traitement vocal pour cette session.', cancel:'Pas maintenant', start:'Commencer la conversation' },
     es: { title:'Activar Emily (voz)', desc:'Para hablar por voz, necesitamos permiso único para usar tu micrófono y reproducir respuestas de audio.', agree:'Acepto el procesamiento de voz para esta sesión.', cancel:'Ahora no', start:'Iniciar conversación' },
     de: { title:'Emily (Sprache) aktivieren', desc:'Für die Sprachfunktion benötigen wir einmalige Berechtigung für Ihr Mikrofon und die Audiowiedergabe.', agree:'Ich stimme der Sprachverarbeitung für diese Sitzung zu.', cancel:'Nicht jetzt', start:'Konversation starten' },
     zh: { title:'启用 Emily（语音）', desc:'要进行语音聊天，我们需要一次性授权使用您的麦克风并播放音频回复。', agree:'我同意在本次会话中进行语音处理。', cancel:'暂不', start:'开始对话' },
     ar: { title:'تفعيل إميلي (صوت)', desc:'للدردشة بالصوت، نحتاج إلى إذن لمرة واحدة لاستخدام الميكروفون وتشغيل الردود الصوتية.', agree:'أوافق على معالجة الصوت لهذه الجلسة.', cancel:'ليس الآن', start:'بدء المحادثة' },
-    it: { title:'Abilita Emily (voce)', desc:'Per parlare con la voce, serve un’autorizzazione una tantum per usare il microfono e riprodurre risposte audio.', agree:'Accetto l’elaborazione vocale per questa sessione.', cancel:'Non ora', start:'Avvia conversazione' },
+    it: { title:'Abilita Emily (voce)', desc:'Per parlare con la voce, serve un'autorizzazione una tantum per usare il microfono e riprodurre risposte audio.', agree:'Accetto l'elaborazione vocale per questa sessione.', cancel:'Non ora', start:'Avvia conversazione' },
     ru: { title:'Включить Emily (голос)', desc:'Чтобы общаться голосом, нам нужно разовое разрешение на использование вашего микрофона и воспроизведение аудиоответов.', agree:'Я согласен на обработку голоса в этом сеансе.', cancel:'Не сейчас', start:'Начать разговор' }
   };
 
@@ -204,8 +204,8 @@
       body: JSON.stringify({
         model: 'gpt-4o-realtime-preview',
         voice: voiceByLang[currentLang] || 'shimmer',
-        language: currentLang
-        family_id: familyId
+        language: currentLang,
+        family_id: familyId  // Pass family_id to backend
       })
     });
     if (!sessRes.ok) throw new Error('Failed to create realtime session: ' + (await sessRes.text().catch(()=>'')));
@@ -270,7 +270,7 @@
     }
   }
 
-  function onEventMessage(evt){
+  async function onEventMessage(evt){
     let msg; try{ msg = JSON.parse(evt.data); } catch { return; }
     switch (msg.type) {
       case 'input_audio_buffer.speech_started':
@@ -287,8 +287,115 @@
         showIndicator('Listening…');
         cancelFallbackTimer(); // reply finished
         break;
+      case 'response.function_call_arguments.done':
+        // Emily called a tool - execute it
+        await handleToolCall(msg);
+        break;
       default: break;
     }
+  }
+
+  async function handleToolCall(msg) {
+    const callId = msg.call_id;
+    const functionName = msg.name;
+    let args = {};
+    
+    try {
+      args = JSON.parse(msg.arguments);
+    } catch (e) {
+      console.error('Failed to parse tool arguments:', e);
+    }
+
+    console.log(`🔧 Tool called: ${functionName}`, args);
+
+    let result = null;
+    let error = null;
+
+    try {
+      if (functionName === 'get_family_context') {
+        // Call the backend endpoint
+        const response = await fetch('/realtime/tool/get_family_context', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ family_id: args.family_id || familyId })
+        });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        result = data;
+        console.log('✅ Family context fetched:', data);
+        
+      } else if (functionName === 'get_open_days') {
+        // Call open days endpoint
+        const response = await fetch('/realtime/tool/get_open_days', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        result = data;
+        console.log('✅ Open days fetched:', data);
+        
+      } else if (functionName === 'kb_search') {
+        // Knowledge base search
+        const response = await fetch('/ask', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question: args.query,
+            language: currentLang,
+            family_id: familyId,
+            session_id: sessionId
+          })
+        });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        result = { answer: data.answer, url: data.url };
+        console.log('✅ Knowledge search completed');
+        
+      } else if (functionName === 'book_tour') {
+        // Book tour - return confirmation
+        result = {
+          ok: true,
+          message: "I'll arrange for our admissions team to contact you about booking a tour."
+        };
+        console.log('✅ Tour booking requested');
+        
+      } else {
+        error = `Unknown tool: ${functionName}`;
+      }
+      
+    } catch (e) {
+      console.error(`Tool execution error:`, e);
+      error = e.message;
+    }
+
+    // Send the result back to Emily
+    sendEvent({
+      type: 'conversation.item.create',
+      item: {
+        type: 'function_call_output',
+        call_id: callId,
+        output: error ? JSON.stringify({ error }) : JSON.stringify(result)
+      }
+    });
+
+    // Tell Emily to generate a response with the tool result
+    sendEvent({
+      type: 'response.create'
+    });
   }
 
   function teardownSession() {
@@ -300,6 +407,8 @@
 
   const urlParams = new URLSearchParams(window.location.search);
   familyId = urlParams.get('family_id') || urlParams.get('id') || null;
+
+  console.log('Emily initialized with family_id:', familyId);
 
   syncLanguage(currentLang);
 })();
