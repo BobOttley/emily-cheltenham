@@ -867,7 +867,11 @@ def create_meeting():
         "joinUrl": join_url,
         "subject": created.get("subject")
     })
-
+@app.route("/embed")
+def embed():
+    """Serve Emily chatbot for iframe embedding in prospectus"""
+    return send_from_directory('.', 'index.html')
+    
 # ----------------- Voice/Realtime Routes -----------------
 @app.route("/api/knowledge/search", methods=["POST"])
 def search_knowledge():
