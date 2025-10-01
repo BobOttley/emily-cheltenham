@@ -1200,7 +1200,7 @@ def search_knowledge():
     
 @app.route("/realtime/session", methods=["POST"])
 def create_realtime_session():
-    """Create OpenAI Realtime API session for voice WITH PERSONALIZED GREETING"""
+    """Create OpenAI Realtime API session for voice WITH PERSONALIZED GREETING AND FULL CONTEXT"""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return jsonify({"error": "OPENAI_API_KEY not set"}), 500
@@ -1209,10 +1209,13 @@ def create_realtime_session():
     
     family_id = body.get("family_id")
     
+    # CRITICAL: Fetch family context BEFORE creating session
     family_context = None
     if family_id:
         family_context = fetch_family_context(family_id)
         print(f"✅ Voice session for family: {family_id}")
+        if family_context:
+            print(f"✅ Family context loaded: {json.dumps(family_context, indent=2)}")
     
     user = get_user_info()
     user_name = user.get("displayName", "User") if user else "User"
@@ -1232,13 +1235,22 @@ IMPORTANT: When asked to create or send emails:
 - Tell the user to check their Outlook drafts folder
 - Never claim to have "sent" an email - you can only create drafts"""
 
-    # CRITICAL: Add personalized greeting for voice sessions
+    # CRITICAL: Add ALL family context to system instructions
     if family_context:
         child_name = family_context.get('child_name', '').strip()
         family_surname_full = family_context.get('family_surname', '').strip()
         parent_name = family_context.get('parent_name', '').strip()
         age_group = family_context.get('age_group', '')
         entry_year = family_context.get('entry_year', '')
+        
+        # Get ALL inquiry form details
+        specific_sports = family_context.get('specific_sports', [])
+        academic_interests = family_context.get('academic_interests', [])
+        activities = family_context.get('activities', [])
+        university_aspirations = family_context.get('university_aspirations', '')
+        boarding_preference = family_context.get('boarding_preference', '')
+        priorities = family_context.get('priorities', {})
+        additional_info = family_context.get('additional_info', '')
         
         # Build personalized greeting
         if child_name and family_surname_full:
@@ -1252,14 +1264,67 @@ IMPORTANT: When asked to create or send emails:
         
         instructions += f"""
 
-IMPORTANT CONTEXT:
-You are speaking with {parent_name} about their child {child_name}.
-- Age group: {age_group}
-- Prospective entry: {entry_year}
+CRITICAL FAMILY CONTEXT - YOU MUST USE THIS IN EVERY RESPONSE:
+Parent: {parent_name}
+Child: {child_name}
+Age group: {age_group}
+Entry year: {entry_year}
+Boarding preference: {boarding_preference}
+
+{child_name}'S SPECIFIC INTERESTS (REFERENCE THESE IN ALL ANSWERS):"""
+        
+        if specific_sports:
+            sports_list = ', '.join(specific_sports)
+            instructions += f"\nSPORTS (in order of preference): {sports_list}"
+            instructions += f"\n  → ALWAYS mention {specific_sports[0]} when discussing sports/facilities"
+            if len(specific_sports) > 1:
+                instructions += f"\n  → Also highlight {specific_sports[1]} opportunities"
+        
+        if academic_interests:
+            academics_list = ', '.join(academic_interests)
+            instructions += f"\nACADEMIC INTERESTS: {academics_list}"
+            instructions += f"\n  → Connect any academic answer to these subjects"
+        
+        if activities:
+            activities_list = ', '.join(activities)
+            instructions += f"\nEXTRA-CURRICULAR: {activities_list}"
+            instructions += f"\n  → Mention relevant clubs/societies"
+        
+        if university_aspirations:
+            instructions += f"\nUNIVERSITY GOAL: {university_aspirations}"
+            instructions += f"\n  → Emphasize Oxbridge preparation and track record"
+        
+        if priorities:
+            instructions += f"\n\nFAMILY PRIORITIES:"
+            if priorities.get('academic', 0) >= 3:
+                instructions += f"\n  → Academic excellence is TOP priority"
+            if priorities.get('sports', 0) >= 3:
+                instructions += f"\n  → Sports development is TOP priority"
+            if priorities.get('pastoral', 0) >= 3:
+                instructions += f"\n  → Pastoral care is TOP priority"
+        
+        if additional_info:
+            instructions += f"\n\nADDITIONAL CONTEXT: {additional_info}"
+        
+        instructions += f"""
+
+MANDATORY BEHAVIOR - YOU MUST DO THIS:
+1. ALWAYS mention {child_name} by name in your responses
+2. ALWAYS connect your answer to their specific sports ({specific_sports[0] if specific_sports else 'interests'})
+3. ALWAYS reference their {university_aspirations if university_aspirations else 'university goals'}
+4. END every response with a personalized follow-up like:
+   "Given {child_name}'s interest in {specific_sports[0] if specific_sports else 'X'}, would you like to hear about..."
 
 FIRST MESSAGE: When responding to the initial "Hello", say exactly: '{greeting}'
 
-After this greeting, respond naturally to their questions.
+EXAMPLE OF WHAT YOU MUST DO:
+Question: "What are your sports facilities?"
+BAD: "We have excellent sports facilities including rugby pitches and golf courses."
+GOOD: "Given {child_name}'s passion for {specific_sports[0] if specific_sports else 'Golf'}, you'll love our facilities - we have [specific details about {specific_sports[0] if specific_sports else 'that sport'}]. Since {child_name} also enjoys {specific_sports[1] if len(specific_sports) > 1 else 'Rugby'}, I should mention [details]. With ambitions for {university_aspirations or 'university'}, combining elite sport with academics is key here. Would you like to know how our {specific_sports[0] if specific_sports else 'sports'} programme supports university applications?"
+
+Make EVERY response this personal and specific to {child_name}.
+
+After this greeting, respond naturally to their questions using the context above.
 """
 
     try:
