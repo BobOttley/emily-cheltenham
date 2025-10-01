@@ -175,31 +175,31 @@
   });
 
   pauseBtn?.addEventListener('click', () => {
-  if (!micStream) return;
-  const track = micStream.getAudioTracks()[0];
-  if (!track) return;
-  
-  // Toggle pause state
-  isPaused = !isPaused;
-  
-  // Pause/resume microphone
-  track.enabled = !isPaused;
-  
-  // Pause/resume Emily's audio output
-  if (aiAudio) {
-    if (isPaused) {
-      aiAudio.pause();
-      aiAudio.muted = true;
-    } else {
-      aiAudio.muted = false;
-      aiAudio.play().catch(()=>{});
+    if (!micStream) return;
+    const track = micStream.getAudioTracks()[0];
+    if (!track) return;
+    
+    // Toggle pause state
+    isPaused = !isPaused;
+    
+    // Pause/resume microphone
+    track.enabled = !isPaused;
+    
+    // Pause/resume Emily's audio output
+    if (aiAudio) {
+      if (isPaused) {
+        aiAudio.pause();
+        aiAudio.muted = true;
+      } else {
+        aiAudio.muted = false;
+        aiAudio.play().catch(()=>{});
+      }
     }
-  }
-  
-  // Update UI
-  pauseBtn.textContent = isPaused ? 'Resume' : 'Pause';
-  showIndicator(isPaused ? 'Paused' : 'Listening…');
-});
+    
+    // Update UI
+    pauseBtn.textContent = isPaused ? 'Resume' : 'Pause';
+    showIndicator(isPaused ? 'Paused' : 'Listening…');
+  });
 
   endBtn?.addEventListener('click', () => {
     teardownSession();
@@ -343,7 +343,161 @@
     let error = null;
 
     try {
-      if (functionName === 'get_family_context') {
+      // ==================== EMAIL FUNCTIONS ====================
+      
+      if (functionName === 'create_mail_draft') {
+        // Create email draft
+        const response = await fetch('/api/emails/draft', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',  // Important for session cookies
+          body: JSON.stringify({
+            to: args.to || [],
+            subject: args.subject || 'Draft Email',
+            body: args.body || args.html || '<p>Draft email content</p>'
+          })
+        });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        result = {
+          ok: true,
+          success: true,
+          draftId: data.draftId,
+          message: `I've created a draft email in your Outlook Drafts folder. Please open Outlook (web or desktop) and go to your Drafts folder to review and send it.`
+        };
+        
+        console.log('✅ Email draft created:', data.draftId);
+        
+      } else if (functionName === 'get_inbox_summary') {
+        // Get inbox summary
+        const response = await fetch('/api/emails/inbox?top=5', {
+          credentials: 'include'
+        });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        const summaries = data.summaries || [];
+        
+        let message = `You have ${summaries.length} recent emails. `;
+        summaries.slice(0, 3).forEach(email => {
+          message += `One from ${email.from} about "${email.subject}". `;
+        });
+        
+        result = {
+          ok: true,
+          success: true,
+          emailCount: summaries.length,
+          message: message
+        };
+        
+        console.log('✅ Inbox summary fetched');
+        
+      } else if (functionName === 'find_meeting_slots') {
+        // Find available meeting times
+        const now = new Date();
+        const tomorrow = new Date(now);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        
+        const response = await fetch('/api/meetings/find', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            attendees: args.attendees || [],
+            durationMinutes: args.durationMinutes || 30,
+            timeWindowStart: args.startTime || now.toISOString(),
+            timeWindowEnd: args.endTime || tomorrow.toISOString()
+          })
+        });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        const suggestions = data.suggestions || [];
+        
+        let message = suggestions.length > 0 
+          ? `I found ${suggestions.length} available time slots. The first one is ${new Date(suggestions[0].meetingTimeSlot.start.dateTime).toLocaleString()}.`
+          : 'No available slots found in the specified time range.';
+        
+        result = {
+          ok: true,
+          success: true,
+          slots: suggestions,
+          message: message
+        };
+        
+        console.log('✅ Meeting slots found');
+        
+      } else if (functionName === 'create_teams_meeting') {
+        // Create Teams meeting
+        const response = await fetch('/api/meetings/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            subject: args.subject || 'Meeting',
+            attendees: args.attendees || [],
+            start: args.start,
+            end: args.end,
+            timeZone: 'Europe/London',
+            bodyHtml: args.bodyHtml || '<p>Meeting agenda</p>',
+            teams: true
+          })
+        });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        result = {
+          ok: true,
+          success: true,
+          meetingId: data.eventId,
+          joinUrl: data.joinUrl,
+          message: `I've created the Teams meeting "${args.subject}" and sent invitations. Check your calendar for the meeting details.`
+        };
+        
+        console.log('✅ Teams meeting created');
+        
+      } else if (functionName === 'create_contact') {
+        // Create Outlook contact
+        const response = await fetch('/api/contacts/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify(args)
+        });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        result = {
+          ok: true,
+          success: true,
+          contactId: data.contactId,
+          message: `I've added ${args.firstName} ${args.lastName || ''} to your Outlook contacts.`
+        };
+        
+        console.log('✅ Contact created');
+        
+      // ==================== CHELTENHAM COLLEGE FUNCTIONS ====================
+      
+      } else if (functionName === 'get_family_context') {
         // Call the backend endpoint
         const response = await fetch('/realtime/tool/get_family_context', {
           method: 'POST',
