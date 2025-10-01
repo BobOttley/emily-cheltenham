@@ -879,17 +879,25 @@ def ask():
     family_id = data.get("family_id")
     
     # Handle welcome message request
-    if question == "__WELCOME__" and family_id:
-        family_context = fetch_family_context(family_id)
-        if family_context:
-            child_name = family_context.get('child_name', '')
-            family_surname = family_context.get('family_surname', '')
+if question == "__WELCOME__" and family_id:
+    family_context = fetch_family_context(family_id)
+    if family_context:
+        child_name = family_context.get('child_name', '').strip()
+        family_surname = family_context.get('family_surname', '').strip()
+        
+        # Build proper welcome message
+        if child_name and family_surname:
             welcome_msg = f"On behalf of Cheltenham College and the admissions team, I'd like to extend a warm welcome to {child_name} and the {family_surname} family. How may I assist you today?"
-            return jsonify({
-                "answer": welcome_msg,
-                "queries": ["fees", "admissions", "open", "contact", "prospectus"],
-                "query_map": {}
-            })
+        elif child_name:
+            welcome_msg = f"On behalf of Cheltenham College and the admissions team, I'd like to extend a warm welcome to {child_name}. How may I assist you today?"
+        else:
+            welcome_msg = "On behalf of Cheltenham College and the admissions team, I'd like to extend you a warm welcome. How may I assist you today?"
+            
+        return jsonify({
+            "answer": welcome_msg,
+            "queries": ["fees", "admissions", "open", "contact", "prospectus"],
+            "query_map": {}
+        })
     
     if not question or question == "__WELCOME__":
         return jsonify({
