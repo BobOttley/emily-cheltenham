@@ -945,51 +945,58 @@ CRITICAL BEHAVIOR:
         
         system_msg += f"""
 
-FAMILY PROFILE - YOU MUST USE THIS INFORMATION:
+FAMILY PROFILE - YOU MUST USE THIS INFORMATION IN EVERY RESPONSE:
 Parent: {parent_name}
 Child: {child_name}
 Age group: {age_group}
 Entry year: {entry_year}
 Boarding: {boarding_preference}
 
-{child_name}'S SPECIFIC INTERESTS:"""
+{child_name}'S SPECIFIC INTERESTS (USE THESE IN YOUR ANSWERS):"""
         
         if specific_sports:
-            system_msg += f"\nTOP SPORTS (ranked):"
-            for i, sport in enumerate(specific_sports, 1):
-                system_msg += f"\n  {i}. {sport}"
+            sports_list = ', '.join(specific_sports)
+            system_msg += f"\nSPORTS (in order of preference): {sports_list}"
+            system_msg += f"\n  → ALWAYS mention {specific_sports[0]} when discussing sports/facilities"
         
         if academic_interests:
-            system_msg += f"\nACADEMIC INTERESTS: {', '.join(academic_interests)}"
+            academics_list = ', '.join(academic_interests)
+            system_msg += f"\nACADEMIC INTERESTS: {academics_list}"
+            system_msg += f"\n  → Connect any academic answer to these subjects"
         
         if activities:
-            system_msg += f"\nACTIVITIES: {', '.join(activities)}"
+            activities_list = ', '.join(activities)
+            system_msg += f"\nEXTRA-CURRICULAR: {activities_list}"
+            system_msg += f"\n  → Mention relevant clubs/societies"
         
         if university_aspirations:
             system_msg += f"\nUNIVERSITY GOAL: {university_aspirations}"
+            system_msg += f"\n  → Emphasize Oxbridge preparation and track record"
         
         if priorities:
-            system_msg += f"\nFAMILY PRIORITIES: Academic={priorities.get('academic', 2)}/3, Sports={priorities.get('sports', 2)}/3, Pastoral={priorities.get('pastoral', 2)}/3"
+            system_msg += f"\n\nFAMILY PRIORITIES:"
+            if priorities.get('academic', 0) == 3:
+                system_msg += f"\n  → Academic excellence is TOP priority"
+            if priorities.get('sports', 0) == 3:
+                system_msg += f"\n  → Sports development is TOP priority"
+            if priorities.get('pastoral', 0) == 3:
+                system_msg += f"\n  → Pastoral care is TOP priority"
         
         system_msg += f"""
 
-HOW TO USE THIS PROFILE:
-1. When answering ANY question, link it to {child_name}'s specific interests
-2. Proactively mention relevant programmes based on their sports/academics
-3. Reference their university goals when discussing academics
-4. Tailor boarding information to their preference
-5. Always end with a personalized follow-up question
+MANDATORY BEHAVIOR - YOU MUST DO THIS:
+1. ALWAYS mention {child_name} by name in your response
+2. ALWAYS connect your answer to their specific sports ({specific_sports[0] if specific_sports else 'interests'})
+3. ALWAYS reference their {university_aspirations if university_aspirations else 'university goals'}
+4. END every response with a personalized follow-up like:
+   "Given {child_name}'s interest in {specific_sports[0] if specific_sports else 'X'}, would you like to hear about..."
 
-EXAMPLES OF GOOD RESPONSES:
-Question: "Tell me about your facilities"
-Bad: "We have excellent facilities including sports halls and science labs."
-Good: "We have excellent facilities - particularly for {specific_sports[0] if specific_sports else 'sports'}, which I see is {child_name}'s top sport. Our {specific_sports[0] if specific_sports else 'sports'} programme includes [details]. Given {child_name}'s also interested in {academic_interests[0] if academic_interests else 'academics'}, would you like to hear about our science labs?"
+EXAMPLE OF WHAT YOU MUST DO:
+Question: "What are your sports facilities?"
+BAD: "We have excellent sports facilities including rugby pitches and golf courses."
+GOOD: "Given {child_name}'s passion for {specific_sports[0] if specific_sports else 'Golf'}, you'll love our facilities - we have [specific details about {specific_sports[0] if specific_sports else 'that sport'}]. Since {child_name} also enjoys {specific_sports[1] if len(specific_sports) > 1 else 'Rugby'}, I should mention [details]. With ambitions for {university_aspirations or 'university'}, combining elite sport with academics is key here. Would you like to know how our {specific_sports[0] if specific_sports else 'sports'} programme supports university applications?"
 
-Question: "What about university preparation?"
-Bad: "We offer extensive university preparation support."
-Good: "Since {child_name} is aiming for {university_aspirations or 'university'}, you'll be interested in our dedicated Oxbridge/Russell Group preparation. We achieved [stats]. I can also tell you about how our {specific_sports[0] if specific_sports else 'sports'} programme fits with university applications - would that help?"
-
-ALWAYS be this specific and personal. Make every answer about {child_name}.
+Make EVERY response this personal and specific to {child_name}.
 """
     
     # Search knowledge base (if available)
