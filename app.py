@@ -306,7 +306,7 @@ def fetch_family_context(family_id: str) -> Optional[Dict[str, Any]]:
                     "boarding_preference": form_data.get("boardingPreference", ""),
                     "academic_interests": form_data.get("academicInterests", []),
                     "activities": form_data.get("activities", []),
-                    "specific_sports": form_data.get("specificSports", []),  # THIS IS THE KEY!
+                    "specific_sports": form_data.get("specificSports", []),
                     "university_aspirations": form_data.get("universityAspirations", ""),
                     "priorities": form_data.get("priorities", {}),
                     "additional_info": form_data.get("additionalInfo", "")
@@ -863,36 +863,41 @@ def embed():
 
 @app.route("/ask", methods=["POST"])
 def ask():
-    """Main chatbot endpoint - handles text and voice questions"""
+    """Main chatbot endpoint - handles text and voice questions WITH PERSONALIZED WELCOME"""
     data = request.get_json() or {}
     question = data.get("question", "").strip()
     language = data.get("language", "en")
     family_id = data.get("family_id")
     
-    # Handle text-based welcome message request (for chatbot UI)
+    # CRITICAL: Handle text-based personalized welcome message
     if question == "__WELCOME__":
         if family_id:
             family_context = fetch_family_context(family_id)
             if family_context:
                 child_name = family_context.get('child_name', '').strip()
                 family_surname_full = family_context.get('family_surname', '').strip()
+                parent_name = family_context.get('parent_name', '').strip()
                 
+                # Build personalized welcome
                 if child_name and family_surname_full:
                     welcome_msg = f"On behalf of Cheltenham College and the admissions team, I'd like to extend a warm welcome to {child_name} and {family_surname_full}. How may I assist you today?"
                 elif child_name:
                     welcome_msg = f"On behalf of Cheltenham College and the admissions team, I'd like to extend a warm welcome to {child_name}. How may I assist you today?"
+                elif parent_name:
+                    welcome_msg = f"On behalf of Cheltenham College and the admissions team, I'd like to extend a warm welcome to {parent_name}. How may I assist you today?"
                 else:
                     welcome_msg = "On behalf of Cheltenham College and the admissions team, I'd like to extend you a warm welcome. How may I assist you today?"
                 
                 return jsonify({
                     "answer": welcome_msg,
-                    "queries": ["fees", "admissions", "open", "contact", "prospectus"],
+                    "queries": ["fees", "admissions", "open days", "contact", "prospectus"],
                     "query_map": {}
                 })
         
+        # Generic welcome if no family context
         return jsonify({
             "answer": "Hi there! Ask me anything about Cheltenham College.",
-            "queries": ["fees", "admissions", "open", "contact", "prospectus"],
+            "queries": ["fees", "admissions", "open days", "contact", "prospectus"],
             "query_map": {}
         })
     
@@ -1185,7 +1190,7 @@ def search_knowledge():
     
 @app.route("/realtime/session", methods=["POST"])
 def create_realtime_session():
-    """Create OpenAI Realtime API session for voice"""
+    """Create OpenAI Realtime API session for voice WITH PERSONALIZED GREETING"""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return jsonify({"error": "OPENAI_API_KEY not set"}), 500
@@ -1217,6 +1222,7 @@ IMPORTANT: When asked to create or send emails:
 - Tell the user to check their Outlook drafts folder
 - Never claim to have "sent" an email - you can only create drafts"""
 
+    # CRITICAL: Add personalized greeting for voice sessions
     if family_context:
         child_name = family_context.get('child_name', '').strip()
         family_surname_full = family_context.get('family_surname', '').strip()
@@ -1224,10 +1230,13 @@ IMPORTANT: When asked to create or send emails:
         age_group = family_context.get('age_group', '')
         entry_year = family_context.get('entry_year', '')
         
+        # Build personalized greeting
         if child_name and family_surname_full:
             greeting = f"On behalf of Cheltenham College and the admissions team, I would like to extend a warm welcome to {child_name} and {family_surname_full}. How may I assist you today?"
         elif child_name:
             greeting = f"On behalf of Cheltenham College and the admissions team, I would like to extend a warm welcome to {child_name}. How may I assist you today?"
+        elif parent_name:
+            greeting = f"On behalf of Cheltenham College and the admissions team, I would like to extend a warm welcome to {parent_name}. How may I assist you today?"
         else:
             greeting = "On behalf of Cheltenham College and the admissions team, I would like to extend you a warm welcome. How may I assist you today?"
         
