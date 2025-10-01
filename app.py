@@ -32,8 +32,14 @@ REDIRECT_URI = os.getenv("MS_REDIRECT_URI", "https://localhost:5000/auth/callbac
 TENANT = os.getenv("MS_TENANT", "common")
 FLASK_SECRET = os.getenv("FLASK_SECRET", "dev-only-change-me-in-production")
 
-if not CLIENT_ID or not CLIENT_SECRET:
-    raise RuntimeError("Set MS_CLIENT_ID and MS_CLIENT_SECRET in .env")
+# Check if Microsoft integration is enabled
+MS_INTEGRATION_ENABLED = bool(CLIENT_ID and CLIENT_SECRET)
+
+if not MS_INTEGRATION_ENABLED:
+    print("⚠️ Microsoft integration disabled - MS_CLIENT_ID and MS_CLIENT_SECRET not set")
+    print("ℹ️  Some features will be unavailable until credentials are configured")
+else:
+    print("✅ Microsoft integration enabled")
 
 # Microsoft OAuth endpoints
 AUTH_URL = f"https://login.microsoftonline.com/{TENANT}/oauth2/v2.0/authorize"
@@ -306,6 +312,12 @@ def api_status():
 @app.route("/login")
 def login():
     """Initiate OAuth flow"""
+    if not MS_INTEGRATION_ENABLED:
+        return jsonify({
+            "error": "Microsoft integration not configured",
+            "message": "Please set MS_CLIENT_ID and MS_CLIENT_SECRET environment variables"
+        }), 503
+    
     params = {
         "client_id": CLIENT_ID,
         "response_type": "code",
@@ -713,18 +725,19 @@ def send_admissions_inquiry():
     if not h:
         return jsonify({"error": "Not authenticated"}), 401
     
+    # Get inquiry details from request (provided by the visitor)
     data = request.get_json() or {}
     
-    inquirer_name = data.get("inquirer_name", "Prospective Parent/Student")
+    inquirer_name = data.get("inquirer_name", "")
     inquirer_email = data.get("inquirer_email", "")
     inquiry_topic = data.get("inquiry_topic", "General Inquiry")
     inquiry_details = data.get("inquiry_details", "")
     phone_number = data.get("phone_number", "Not provided")
     
-    if not inquirer_email:
+    if not inquirer_email or not inquirer_name:
         return jsonify({
             "success": False,
-            "error": "Inquirer email is required to send the inquiry"
+            "error": "Inquirer name and email are required"
         }), 400
     
     # Get the admissions email from environment or use default
@@ -795,7 +808,8 @@ def send_admissions_inquiry():
         "success": True,
         "message": f"I've sent your enquiry to {admissions_email} and copied you at {inquirer_email}. The admissions team will be in touch soon.",
         "admissions_email": admissions_email,
-        "cc_email": inquirer_email
+        "cc_email": inquirer_email,
+        "inquirer_name": inquirer_name
     })
 
 @app.route("/api/admissions/check", methods=["POST"])
@@ -844,6 +858,8 @@ CRITICAL - Admissions & Enquiry Handling:
 - ONLY offer to email admissions if user explicitly says: "contact admissions", "email admissions", "put me in touch", or "I want to enquire"
 - DO NOT trigger on casual mentions of: "prospectus", "fees", "tours" - instead provide information or direct to website
 - If they want to enquire, say: "I can help you get in touch with our admissions team. May I have your email address so I can copy you on the message?"
+- ALWAYS ask for their name and email address - you need this to CC them
+- Collect: name, email, inquiry details, and optionally phone number
 - ALWAYS CC the inquirer on any email to admissions
 - For general questions, provide helpful information and say: "For personalised information, you can visit cheltenham.org/admissions or I can connect you with our team."
 
@@ -942,18 +958,30 @@ Keep responses concise and conversational."""
                     {
                         "type": "function",
                         "name": "send_admissions_inquiry",
-                        "description": "Send enquiry to admissions. MUST include inquirer_email to CC them on the message. Only use after user confirms they want to enquire.",
+                        "description": "Send enquiry to admissions. Ask the user for their email address so they can be CC'd on the message.",
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "inquirer_name": {"type": "string"},
+                                "inquirer_name": {
+                                    "type": "string",
+                                    "description": "The person's name"
+                                },
                                 "inquirer_email": {
                                     "type": "string",
-                                    "description": "REQUIRED - user's email to CC them on the message"
-                                }, 
-                                "inquiry_topic": {"type": "string"},
-                                "inquiry_details": {"type": "string"},
-                                "phone_number": {"type": "string"}
+                                    "description": "The person's email address to CC them"
+                                },
+                                "inquiry_topic": {
+                                    "type": "string",
+                                    "description": "What they want to enquire about"
+                                },
+                                "inquiry_details": {
+                                    "type": "string",
+                                    "description": "Full details of their enquiry"
+                                },
+                                "phone_number": {
+                                    "type": "string",
+                                    "description": "Their phone number if provided (optional)"
+                                }
                             },
                             "required": ["inquirer_name", "inquirer_email", "inquiry_topic", "inquiry_details"]
                         }
