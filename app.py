@@ -1,1162 +1,1013 @@
-#!/usr/bin/env python3
-"""PEN.ai Flask backend – Enhanced conversational voice with memory and proactive engagement"""
+# emily_cheltenham_enhanced.py
+# Enhanced Emily for Cheltenham College with Microsoft 365 Email Integration
 
 import os
-import re
+import ssl
+import time
 import json
-import numpy as np
-import uuid
+import requests
 import pickle
-import hashlib
-import difflib
-from datetime import datetime, date
+import subprocess
+from pathlib import Path
+from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 from typing import Optional, Dict, Any, List
 
-import requests
-from bs4 import BeautifulSoup
-from dateutil import parser as dateparse
-from flask import Flask, request, jsonify, send_from_directory, session
+from flask import Flask, redirect, request, session, jsonify, render_template
 from flask_cors import CORS
 from dotenv import load_dotenv
 from openai import OpenAI
-from flask import make_response
+from bs4 import BeautifulSoup
 
-
-# ── Boot ────────────────────────────────────────────────────────────────────
-print("✅ Flask server is starting")
+# Load environment variables
 load_dotenv()
 
-# ── OpenAI client ──────────────────────────────────────────────────────────
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Initialize OpenAI client
+openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# ── Flask app ──────────────────────────────────────────────────────────────
-app = Flask(__name__, static_folder='static', static_url_path='/static')
-app.secret_key = os.getenv("SECRET_KEY", "dev-key-change-in-production")
+# Microsoft app settings
+CLIENT_ID = os.getenv("MS_CLIENT_ID")
+CLIENT_SECRET = os.getenv("MS_CLIENT_SECRET")
+REDIRECT_URI = os.getenv("MS_REDIRECT_URI", "https://localhost:5000/auth/callback")
+TENANT = os.getenv("MS_TENANT", "common")
+FLASK_SECRET = os.getenv("FLASK_SECRET", "dev-only-change-me-in-production")
 
-# Configure CORS to allow iframe embedding
-CORS(app, resources={
-    r"/*": {
-        "origins": "*",
-        "methods": ["GET", "POST", "OPTIONS"],
-        "allow_headers": ["Content-Type"],
-        "supports_credentials": False
-    }
-})
+if not CLIENT_ID or not CLIENT_SECRET:
+    raise RuntimeError("Set MS_CLIENT_ID and MS_CLIENT_SECRET in .env")
 
-# ── School Configuration ────────────────────────────────────────────────────
-SCHOOL_ID = os.getenv("SCHOOL_ID", "cheltenham")
+# Microsoft OAuth endpoints
+AUTH_URL = f"https://login.microsoftonline.com/{TENANT}/oauth2/v2.0/authorize"
+TOKEN_URL = f"https://login.microsoftonline.com/{TENANT}/oauth2/v2.0/token"
+GRAPH_URL = "https://graph.microsoft.com/v1.0"
 
-SCHOOL_CONFIG = {
-    'cheltenham': {
-        'name': 'Cheltenham College',
-        'website': 'https://www.cheltenhamcollege.org',
-        'admissions_email': 'admissions@cheltenhamcollege.org',
-        'phone': '+44 (0)1242 265600'
-    },
-    'more-house': {
-        'name': 'More House School',
-        'website': 'https://www.morehouseschool.co.uk',
-        'admissions_email': 'admissions@morehouseschool.co.uk',
-        'phone': '+44 (0)20 7235 2855'
-    }
-}
+# Corrected scopes (no URL prefix for standard scopes)
+SCOPES = [
+    "offline_access",
+    "openid",
+    "profile",
+    "email",
+    "User.Read",
+    "Mail.Read",
+    "Mail.ReadWrite",
+    "Mail.Send",
+    "Calendars.ReadWrite",
+    "MailboxSettings.Read",
+    "Contacts.ReadWrite"
+]
+SCOPE_STR = " ".join(SCOPES)
 
-CURRENT_SCHOOL = SCHOOL_CONFIG.get(SCHOOL_ID, SCHOOL_CONFIG['cheltenham'])
-print(f"🏫 Emily configured for: {CURRENT_SCHOOL['name']}")
+# Initialize Flask app
+app = Flask(__name__, static_folder='static', static_url_path='/static', template_folder='templates')
+app.secret_key = FLASK_SECRET
 
-# ── Conversation Memory Store ──────────────────────────────────────────────
-conversation_memory = {}  # In production, use Redis or similar
+# Configure session for HTTPS
+app.config['SESSION_COOKIE_SECURE'] = True
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'None'
+app.config['SESSION_COOKIE_NAME'] = 'emily_cheltenham_session'
 
-# ── Postgres (optional) ────────────────────────────────────────────────────
-HAVE_DB = False
-ConnectionPool = None
+CORS(app, supports_credentials=True)
+
+# Load Cheltenham College knowledge base (if available)
+EMBEDDINGS_PATH = os.path.join(os.path.dirname(__file__), "doc_embeddings.pkl")
+METADATA_PATH = os.path.join(os.path.dirname(__file__), "metadata.pkl")
+
 try:
-    from psycopg_pool import ConnectionPool  # type: ignore
-    HAVE_DB = True
-except Exception:
-    print("⚠️ psycopg_pool not installed. Run: pip install psycopg[binary,pool]")
+    with open(EMBEDDINGS_PATH, 'rb') as f:
+        DOC_EMBEDDINGS = pickle.load(f)
+    with open(METADATA_PATH, 'rb') as f:
+        METADATA = pickle.load(f)
+    print(f"✅ Loaded {len(DOC_EMBEDDINGS)} knowledge base embeddings")
+except Exception as e:
+    print(f"⚠️ Could not load embeddings: {e}")
+    DOC_EMBEDDINGS = []
+    METADATA = []
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-db_pool: Optional[ConnectionPool] = None
-if HAVE_DB and DATABASE_URL:
+# ----------------- SSL Certificate Management -----------------
+
+def create_self_signed_cert():
+    """Create a self-signed certificate for development"""
+    cert_dir = Path("certs")
+    cert_dir.mkdir(exist_ok=True)
+    
+    cert_file = cert_dir / "cert.pem"
+    key_file = cert_dir / "key.pem"
+    
+    if cert_file.exists() and key_file.exists():
+        try:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.load_cert_chain(str(cert_file), str(key_file))
+            print(f"✅ Using existing certificate: {cert_file}")
+            return str(cert_file), str(key_file)
+        except Exception as e:
+            print(f"⚠️ Existing certificate invalid: {e}")
+            cert_file.unlink(missing_ok=True)
+            key_file.unlink(missing_ok=True)
+    
     try:
-        db_pool = ConnectionPool(conninfo=DATABASE_URL, min_size=1, max_size=5, kwargs={"sslmode": "require"})
-        print("🗄️  Postgres pool initialised")
+        print("🔐 Generating new self-signed certificate...")
+        result = subprocess.run([
+            'openssl', 'req', '-x509', '-newkey', 'rsa:2048',
+            '-keyout', str(key_file),
+            '-out', str(cert_file),
+            '-days', '365',
+            '-nodes',
+            '-subj', '/C=GB/ST=England/L=Cheltenham/O=CheltenhamCollege/CN=localhost'
+        ], capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            print(f"✅ Created self-signed certificate: {cert_file}")
+            return str(cert_file), str(key_file)
+        else:
+            print(f"❌ OpenSSL error: {result.stderr}")
+            return None, None
+    except FileNotFoundError:
+        print("❌ OpenSSL not found. Please install OpenSSL.")
+        return None, None
     except Exception as e:
-        print("⚠️ Postgres pool init failed:", e)
-else:
-    if not DATABASE_URL:
-        print("⚠️ DATABASE_URL not set. Family context endpoints will be disabled.")
+        print(f"❌ Could not create certificate: {e}")
+        return None, None
 
-# ── Knowledge base (embeddings already prepared) ───────────────────────────
-with open("kb_chunks/kb_chunks.pkl", "rb") as f:
-    kb_chunks = pickle.load(f)
+# ----------------- Token Management -----------------
 
-EMBEDDINGS = np.array([chunk["embedding"] for chunk in kb_chunks], dtype=np.float32)
-METADATA = kb_chunks
+def _now():
+    return int(time.time())
 
-# Debug + validation
-print("KB embeddings shape:", EMBEDDINGS.shape, flush=True)
-if EMBEDDINGS.ndim != 2 or EMBEDDINGS.shape[0] == 0 or EMBEDDINGS.shape[1] < 32:
-    print("⚠️ KB embeddings look wrong – expected (N, 1536) for text-embedding-3-small.", flush=True)
+def _save_tokens(tok: dict):
+    session["access_token"] = tok.get("access_token")
+    session["refresh_token"] = tok.get("refresh_token")
+    session["expires_at"] = _now() + int(tok.get("expires_in", 3599))
 
+def _need_refresh() -> bool:
+    return not session.get("access_token") or (_now() >= int(session.get("expires_at", 0)) - 60)
 
-# ── Improved Response Formatting ──────────────────────────────────────────
-def detect_topic_from_question(question_text):
-    """Simple topic detection"""
-    q_lower = question_text.lower()
-    if any(word in q_lower for word in ["fee", "cost", "price", "tuition", "charges"]):
-        return "fees"
-    elif any(word in q_lower for word in ["admission", "apply", "join", "register"]):
-        return "admissions"
-    elif any(word in q_lower for word in ["subject", "curriculum", "academic"]):
-        return "subjects"
-    elif any(word in q_lower for word in ["boarding", "boarder", "house"]):
-        return "boarding"
-    elif any(word in q_lower for word in ["scholarship", "bursary", "award"]):
-        return "scholarships"
-    elif any(word in q_lower for word in ["open", "visit", "tour"]):
-        return "open_events"
-    elif any(word in q_lower for word in ["sixth form", "a level", "upper college"]):
-        return "sixth_form"
-    elif any(word in q_lower for word in ["sport", "athletics", "rugby", "netball"]):
-        return "sport"
-    return None
+def _refresh_tokens_if_needed():
+    """Refresh tokens if needed"""
+    if not _need_refresh():
+        return True
+    
+    rt = session.get("refresh_token")
+    if not rt:
+        print("No refresh token available")
+        return False
+    
+    try:
+        data = {
+            "client_id": CLIENT_ID,
+            "client_secret": CLIENT_SECRET,
+            "grant_type": "refresh_token",
+            "refresh_token": rt,
+            "redirect_uri": REDIRECT_URI,
+            "scope": SCOPE_STR
+        }
+        resp = requests.post(TOKEN_URL, data=data, timeout=10)
+        
+        if resp.ok:
+            token_data = resp.json()
+            _save_tokens(token_data)
+            print("Tokens refreshed successfully")
+            return True
+        else:
+            print(f"Token refresh failed: {resp.status_code} - {resp.text}")
+            session.pop("access_token", None)
+            session.pop("refresh_token", None)
+            session.pop("expires_at", None)
+            return False
+            
+    except Exception as e:
+        print(f"Error refreshing tokens: {e}")
+        return False
 
-def format_fees_response(clean_response, detected_topic):
-    """Format fees responses with better structure"""
-    if detected_topic == "fees" and any(word in clean_response.lower() for word in ["prep", "college", "boarding", "day"]):
-        return f"""**School Fees for 2025-26**
+def _auth_headers():
+    _refresh_tokens_if_needed()
+    at = session.get("access_token")
+    if not at:
+        return None
+    return {"Authorization": f"Bearer {at}", "Content-Type": "application/json"}
 
-{clean_response}
+def _me(headers):
+    """Get user info"""
+    try:
+        r = requests.get(f"{GRAPH_URL}/me", headers=headers, timeout=10)
+        if r.ok:
+            return r.json()
+        else:
+            print(f"Graph API /me error: {r.status_code} - {r.text}")
+            return {"error": r.text}
+    except Exception as e:
+        print(f"Error in _me: {e}")
+        return {"error": str(e)}
 
-**Important Notes:**
-• All fees shown are exclusive of VAT (20% will be added)
-• Additional costs may apply for trips, activities, and equipment  
-• Bursaries and scholarships are available to eligible families
-• Payment plans can be arranged
+def get_user_info():
+    """Get current user information"""
+    headers = _auth_headers()
+    if not headers:
+        return None
+    return _me(headers)
 
-For the most current fees information, detailed breakdowns, and payment options, please visit our official fees page."""
-    return clean_response
+def _extract_plaintext_from_email(msg: dict) -> str:
+    """Extract plain text from HTML email content"""
+    body = (msg or {}).get("body", {})
+    content = body.get("content") or ""
+    content_type = (body.get("contentType") or "text").lower()
+    
+    if content_type == "html":
+        soup = BeautifulSoup(content, 'html.parser')
+        for script in soup(["script", "style"]):
+            script.decompose()
+        text = soup.get_text()
+        lines = (line.strip() for line in text.splitlines())
+        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+        text = '\n'.join(chunk for chunk in chunks if chunk)
+        return text[:2000]
+    return content.strip()[:2000]
 
-def get_better_url_and_label(detected_topic, meta_url):
-    """Get appropriate website URLs based on topic"""
-    topic_urls = {
-        "fees": ("https://www.cheltenhamcollege.org/admissions/fees/", "View fees page"),
-        "admissions": ("https://www.cheltenhamcollege.org/admissions/", "Visit admissions page"),
-        "subjects": ("https://www.cheltenhamcollege.org/college/curriculum/", "Explore curriculum"),
-        "boarding": ("https://www.cheltenhamcollege.org/college/boarding/", "Discover boarding life"),
-        "scholarships": ("https://www.cheltenhamcollege.org/admissions/scholarships-awards/", "View scholarships"),
-        "open_events": ("https://www.cheltenhamcollege.org/admissions/visit-us/open-events/", "Book open event"),
-        "sixth_form": ("https://www.cheltenhamcollege.org/college/upper-college-16-18/", "Learn about Sixth Form"),
-        "sport": ("https://www.cheltenhamcollege.org/college/co-curricular/sport/", "Explore sports"),
+# ----------------- Authentication Routes -----------------
+
+@app.route("/")
+def home():
+    """Main dashboard"""
+    if "access_token" not in session:
+        return redirect("/login")
+    
+    user = get_user_info()
+    if not user or "error" in user:
+        session.clear()
+        return redirect("/login")
+    
+    return render_template("index.html", user=user)
+
+@app.route("/api/status")
+def api_status():
+    """Check authentication status"""
+    if "access_token" not in session:
+        return jsonify({"authenticated": False})
+    
+    _refresh_tokens_if_needed()
+    
+    if "access_token" not in session:
+        return jsonify({"authenticated": False})
+    
+    h = _auth_headers()
+    if not h:
+        return jsonify({"authenticated": False})
+    
+    try:
+        r = requests.get(f"{GRAPH_URL}/me", headers=h, timeout=10)
+        
+        if r.ok:
+            me = r.json()
+            display_name = (
+                me.get("displayName") or 
+                me.get("givenName") or 
+                ""
+            )
+            email = (
+                me.get("mail") or 
+                me.get("userPrincipalName") or 
+                ""
+            )
+            
+            if not display_name and email:
+                email_name = email.split('@')[0]
+                display_name = ' '.join(
+                    word.capitalize() 
+                    for word in email_name.replace('.', ' ').replace('_', ' ').split()
+                )
+            
+            if not display_name:
+                display_name = "User"
+            
+            return jsonify({
+                "authenticated": True,
+                "user": {
+                    "name": display_name,
+                    "email": email,
+                    "id": me.get("id", "")
+                }
+            })
+        else:
+            if r.status_code == 401:
+                session.clear()
+                return jsonify({"authenticated": False})
+            
+            return jsonify({
+                "authenticated": True,
+                "user": {"name": "User", "email": "", "id": ""}
+            })
+            
+    except Exception as e:
+        print(f"Error getting user info: {e}")
+        return jsonify({
+            "authenticated": True,
+            "user": {"name": "User", "email": "", "id": ""}
+        })
+
+@app.route("/login")
+def login():
+    """Initiate OAuth flow"""
+    params = {
+        "client_id": CLIENT_ID,
+        "response_type": "code",
+        "redirect_uri": REDIRECT_URI,
+        "response_mode": "query",
+        "scope": SCOPE_STR,
+        "prompt": "select_account"
+    }
+    q = "&".join([f"{k}={quote(v)}" for k, v in params.items()])
+    auth_url = f"{AUTH_URL}?{q}"
+    print(f"Redirecting to: {auth_url}")
+    return redirect(auth_url)
+
+@app.route("/auth/callback")
+def callback():
+    """Handle OAuth callback"""
+    code = request.args.get("code")
+    error = request.args.get("error")
+    
+    if error:
+        print(f"OAuth error: {error}")
+        return f"Authentication error: {error}", 400
+    
+    if not code:
+        return "Missing authorization code", 400
+    
+    data = {
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET,
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": REDIRECT_URI,
+        "scope": SCOPE_STR
     }
     
-    if detected_topic and detected_topic in topic_urls:
-        return topic_urls[detected_topic]
+    try:
+        tok_response = requests.post(TOKEN_URL, data=data, timeout=10)
+        tok = tok_response.json()
+        
+        if "access_token" not in tok:
+            print(f"Token error: {tok}")
+            return jsonify(tok), 400
+            
+        _save_tokens(tok)
+        print("Tokens saved successfully")
+        return redirect("/")
+        
+    except Exception as e:
+        print(f"Token exchange error: {e}")
+        return f"Token exchange failed: {e}", 500
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    """Sign out user"""
+    session.clear()
+    return jsonify({"success": True})
+
+# ----------------- Email Routes -----------------
+
+@app.route("/api/emails/inbox", methods=["GET"])
+def get_inbox():
+    """Get inbox messages with summaries"""
+    h = _auth_headers()
+    if not h:
+        return jsonify({"error": "Not authenticated"}), 401
     
-    return meta_url or "https://www.cheltenhamcollege.org/", "Visit website"
-
-
-# ── Conversation Intelligence ──────────────────────────────────────────────
-class ConversationTracker:
-    def __init__(self, session_id: str, family_id: Optional[str] = None):
-        self.session_id = session_id
-        self.family_id = family_id
-        self.started_at = datetime.now()
-        self.interactions = []
-        self.topics_discussed = set()
-        self.concerns = []
-        self.child_name = None
-        self.parent_name = None
-        self.year_group = None
-        self.interests = []
-        self.high_intent_signals = 0
-        self.last_topic = None
-        self.emotional_state = "neutral"
+    top = request.args.get("top", "20")
+    url = f"{GRAPH_URL}/me/mailFolders/Inbox/messages?$top={top}&$orderby=receivedDateTime desc"
+    
+    try:
+        r = requests.get(url, headers=h, timeout=10)
         
-    def add_interaction(self, question: str, answer: str, topic: Optional[str] = None):
-        self.interactions.append({
-            "timestamp": datetime.now().isoformat(),
-            "question": question,
-            "answer": answer[:200],
-            "topic": topic
-        })
+        if not r.ok:
+            return jsonify({"error": "Failed to fetch emails"}), r.status_code
         
-        if topic:
-            self.topics_discussed.add(topic)
-            self.last_topic = topic
+        messages = r.json().get("value", [])
+        summaries = []
+        
+        for msg in messages:
+            from_address = "unknown"
+            if msg.get("from"):
+                from_address = msg["from"].get("emailAddress", {}).get("address", "unknown")
             
-        high_intent_keywords = ["apply", "visit", "fee", "scholarship", "when can", "how do I", "register"]
-        if any(keyword in question.lower() for keyword in high_intent_keywords):
-            self.high_intent_signals += 1
-            
-        concern_keywords = ["worried", "concern", "anxiety", "difficult", "struggle", "help", "support", "nervous"]
-        if any(keyword in question.lower() for keyword in concern_keywords):
-            self.concerns.append(question)
-            self.emotional_state = "concerned"
-            
-    def get_conversation_summary(self) -> Dict[str, Any]:
-        return {
-            "session_duration": (datetime.now() - self.started_at).seconds,
-            "interaction_count": len(self.interactions),
-            "topics": list(self.topics_discussed),
-            "high_intent": self.high_intent_signals >= 2,
-            "emotional_state": self.emotional_state,
-            "concerns": self.concerns[:3],
-            "last_topic": self.last_topic
-        }
+            summaries.append({
+                "id": msg.get("id"),
+                "subject": msg.get("subject", "No subject"),
+                "from": from_address,
+                "received": msg.get("receivedDateTime", ""),
+                "isRead": msg.get("isRead", False),
+                "hasAttachments": msg.get("hasAttachments", False)
+            })
         
-    def should_offer_human_handoff(self) -> bool:
-        return (
-            self.high_intent_signals >= 3 or 
-            len(self.concerns) >= 2 or
-            len(self.interactions) >= 10 or
-            self.emotional_state == "concerned"
-        )
+        return jsonify({"summaries": summaries, "total": len(summaries)})
+        
+    except Exception as e:
+        print(f"Inbox error: {e}")
+        return jsonify({"error": str(e)}), 500
 
-# ── Enhanced Response Builder ──────────────────────────────────────────────
-class ResponseEnhancer:
-    def __init__(self):
-        self.follow_up_questions = {
-            "fees": [
-                "Are you also interested in our scholarship opportunities?",
-                "Would you like to know about our payment plans?",
-                "Shall I explain our bursary programme?"
-            ],
-            "sports": [
-                "What sports does {child_name} enjoy currently?",
-                "Is {child_name} interested in competitive teams or recreational activities?",
-                "Would you like to know about our sports facilities?"
-            ],
-            "academic": [
-                "What subjects does {child_name} particularly enjoy?",
-                "Are you interested in our academic enrichment programmes?",
-                "Would you like to see our recent exam results?"
-            ],
-            "admissions": [
-                "Which year group are you considering for entry?",
-                "Would you like to book a personal tour?",
-                "Shall I explain our application timeline?"
-            ],
-            "pastoral": [
-                "Is there anything specific about {child_name}'s needs I should know?",
-                "Would you like to speak with our pastoral team?",
-                "Are you interested in our wellbeing programmes?"
-            ]
-        }
-        
-        self.reassurance_phrases = [
-            "That's a very common concern, and I'm happy to address it...",
-            "Many parents ask about this, and it's important to get it right...",
-            "I completely understand why you'd want to know about this...",
-            "That's an excellent question, and I'm glad you asked..."
+@app.route("/api/emails/draft", methods=["POST"])
+def create_email_draft():
+    """Create a new email draft in Outlook or send immediately"""
+    h = _auth_headers()
+    if not h:
+        return jsonify({"error": "Not authenticated"}), 401
+    
+    data = request.get_json() or {}
+    send_immediately = data.get("send", False)  # Check if user wants to send
+    
+    message_data = {
+        "subject": data.get("subject", "Draft Email" if not send_immediately else "Email"),
+        "body": {
+            "contentType": "HTML",
+            "content": data.get("body", "<p>Email content</p>")
+        },
+        "toRecipients": [
+            {"emailAddress": {"address": email}} 
+            for email in (data.get("to", []) if isinstance(data.get("to"), list) else [data.get("to")] if data.get("to") else [])
         ]
-        
-    def enhance_for_voice(self, base_answer: str, context: ConversationTracker, family_ctx: Optional[Dict] = None) -> str:
-        enhanced = self._add_acknowledgment(context)
-        enhanced += f" {base_answer}"
-        
-        if family_ctx and family_ctx.get('child_name'):
-            enhanced = enhanced.replace("your child", family_ctx['child_name'])
-            enhanced = enhanced.replace("your daughter", family_ctx['child_name'])
-            
-        if context.emotional_state == "concerned":
-            enhanced = f"{self.reassurance_phrases[len(context.concerns) % len(self.reassurance_phrases)]} {enhanced}"
-            
-        follow_up = self._get_follow_up_question(context, family_ctx)
-        if follow_up:
-            enhanced += f" {follow_up}"
-            
-        if context.should_offer_human_handoff() and len(context.interactions) % 5 == 0:
-            enhanced += " By the way, would you like me to arrange for someone from our admissions team to call you directly?"
-            
-        return enhanced
-        
-    def _add_acknowledgment(self, context: ConversationTracker) -> str:
-        if len(context.interactions) == 0:
-            return "Hello! What a lovely question to start with."
-        elif context.last_topic in str(context.topics_discussed):
-            return "Following on from what we discussed..."
-        elif context.emotional_state == "concerned":
-            return "I can hear this is important to you."
-        else:
-            acknowledgments = [
-                "That's a great question.",
-                "I'm glad you asked about that.",
-                "Let me tell you about that.",
-                "Excellent question.",
-                "Many families ask about this."
-            ]
-            return acknowledgments[len(context.interactions) % len(acknowledgments)]
-            
-    def _get_follow_up_question(self, context: ConversationTracker, family_ctx: Optional[Dict] = None) -> str:
-        if not context.last_topic:
-            return "Is there anything specific you'd like to know about Cheltenham College?"
-            
-        topic_key = self._categorize_topic(context.last_topic)
-        questions = self.follow_up_questions.get(topic_key, ["What else would you like to know?"])
-        
-        question = questions[len(context.interactions) % len(questions)]
-        
-        if family_ctx and family_ctx.get('child_name'):
-            question = question.replace("{child_name}", family_ctx['child_name'])
-        else:
-            question = question.replace("{child_name}", "your daughter")
-            
-        return question
-        
-    def _categorize_topic(self, topic: str) -> str:
-        topic_lower = topic.lower() if topic else ""
-        
-        if any(word in topic_lower for word in ["fee", "cost", "price", "burs", "scholar"]):
-            return "fees"
-        elif any(word in topic_lower for word in ["sport", "athletic", "team", "football", "netball"]):
-            return "sports"
-        elif any(word in topic_lower for word in ["academic", "subject", "curriculum", "exam", "result"]):
-            return "academic"
-        elif any(word in topic_lower for word in ["admission", "apply", "join", "entry", "register"]):
-            return "admissions"
-        elif any(word in topic_lower for word in ["pastoral", "care", "wellbeing", "support", "help"]):
-            return "pastoral"
-        else:
-            return "general"
-
-# ── Utilities ──────────────────────────────────────────────────────────────
-def remove_bullets(text: str) -> str:
-    return re.sub(r"^[\s]*([•\-\*\d]+\s*)+", "", text, flags=re.MULTILINE)
-
-def format_response(text: str) -> str:
-    return re.sub(r"\n{2,}", "\n\n", text.strip())
-
-def safe_trim(v: Any, limit: int = 120) -> str:
-    if v is None:
-        return ""
-    s = str(v).strip()
-    return (s if len(s) <= limit else s[:limit] + "…")
-
-# ── Embedding function ─────────────────────────────────────────────────────
-def embed_text(text: str) -> np.ndarray:
-    resp = client.embeddings.create(
-        model="text-embedding-3-small",
-        input=text.strip()
-    )
-    vec = np.array(resp.data[0].embedding, dtype=np.float32)
-    if EMBEDDINGS.ndim == 2 and EMBEDDINGS.shape[0] > 0 and EMBEDDINGS.shape[1] != vec.shape[0]:
-        print(f"⚠️ Embedding dim mismatch – KB:{EMBEDDINGS.shape[1]} vs query:{vec.shape[0]}. "
-              f"Rebuild KB with text-embedding-3-small OR change this model to match the KB.",
-              flush=True)
-    return vec
-
-
-# ── Vector search ──────────────────────────────────────────────────────────
-def vector_search(query: str, k: int = 10):
-    q_vec = embed_text(query)
-
-    if EMBEDDINGS.ndim != 2 or EMBEDDINGS.shape[0] == 0:
-        return np.array([]), np.array([], dtype=int)
-    if EMBEDDINGS.shape[1] != q_vec.shape[0]:
-        print(f"⚠️ Skipping vector search due to dim mismatch (KB:{EMBEDDINGS.shape[1]} vs query:{q_vec.shape[0]}).", flush=True)
-        return np.array([]), np.array([], dtype=int)
-
-    norm_q = np.linalg.norm(q_vec) + 1e-10
-    norms = np.linalg.norm(EMBEDDINGS, axis=1) + 1e-10
-    sims = (EMBEDDINGS @ q_vec) / (norms * norm_q)
-
-    if k >= sims.shape[0]:
-        idxs = np.argsort(sims)[::-1]
-    else:
-        top_k = np.argpartition(sims, -k)[-k:]
-        idxs = top_k[np.argsort(sims[top_k])[::-1]]
-
-    return sims, idxs
-
-
-# ── DB helpers ─────────────────────────────────────────────────────────────
-def fetch_family_context(family_id: str, school: str = None) -> Optional[Dict[str, Any]]:
-    """
-    Fetch family context from inquiries table with school filtering
+    }
     
-    Args:
-        family_id: The inquiry ID to fetch
-        school: School identifier (defaults to SCHOOL_ID)
-    """
-    if not db_pool:
-        return None
+    # Add CC recipients if provided
+    if data.get("cc"):
+        message_data["ccRecipients"] = [
+            {"emailAddress": {"address": email}}
+            for email in (data.get("cc", []) if isinstance(data.get("cc"), list) else [data.get("cc")])
+        ]
     
-    # Use global SCHOOL_ID if not specified
-    if school is None:
-        school = SCHOOL_ID
-        
-    sql = """
-    SELECT
-      id AS family_id,
-      COALESCE(child_first_name, child_name)  AS child_first_name,
-      COALESCE(child_last_name, '')           AS child_last_name,
-      COALESCE(year_group, entry_year, '')    AS year_group,
-      COALESCE(boarding_status, '')           AS boarding_status,
-      COALESCE(main_interests, '')            AS main_interests,
-      COALESCE(parent_name, contact_name, '') AS parent_name,
-      COALESCE(parent_email, contact_email, '') AS parent_email,
-      COALESCE(country, '')                   AS country,
-      COALESCE(language_pref, 'en')           AS language_pref,
-      school
-    FROM public.inquiries
-    WHERE id = %s AND school = %s
-    LIMIT 1;
-    """
-    try:
-        with db_pool.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, (family_id, school))
-                row = cur.fetchone()
-                if not row:
-                    return None
-                cols = [d.name for d in cur.description]
-                data = dict(zip(cols, row))
-                child_name = " ".join(filter(None, [
-                    safe_trim(data.get("child_first_name")),
-                    safe_trim(data.get("child_last_name"))
-                ])).strip()
-                summary = {
-                    "family_id": data.get("family_id"),
-                    "child_name": child_name or None,
-                    "year_group": safe_trim(data.get("year_group")),
-                    "boarding_status": safe_trim(data.get("boarding_status")),
-                    "interests": safe_trim(data.get("main_interests")),
-                    "country": safe_trim(data.get("country")),
-                    "language_pref": (data.get("language_pref") or "en")[:5],
-                    "parent_name": data.get("parent_name"),
-                    "parent_email": data.get("parent_email"),
-                    "school": data.get("school")
-                }
-                return summary
-    except Exception as e:
-        print("DB fetch error:", e)
-        return None
-
-def log_interaction_to_db(family_id: str, question: str, answer: str, metadata: Dict, school: str = None):
-    """
-    Log interactions for admissions dashboard with school filtering
-    
-    Args:
-        family_id: The inquiry ID
-        question: User's question
-        answer: Emily's answer
-        metadata: Additional metadata
-        school: School identifier (defaults to SCHOOL_ID)
-    """
-    if not db_pool or not family_id:
-        return
-    
-    # Use global SCHOOL_ID if not specified
-    if school is None:
-        school = SCHOOL_ID
-        
-    sql = """
-    INSERT INTO chat_interactions 
-    (family_id, question, answer, topic, sentiment, timestamp, metadata, school)
-    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-    """
-    try:
-        with db_pool.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, (
-                    family_id,
-                    question[:500],
-                    answer[:500],
-                    metadata.get('topic'),
-                    metadata.get('sentiment'),
-                    datetime.now(),
-                    json.dumps(metadata),
-                    school
-                ))
-                conn.commit()
-    except Exception as e:
-        print(f"Failed to log interaction: {e}")
-
-# ── Enhanced Answer Logic ──────────────────────────────────────────────────
-from static_qa_config import STATIC_QA_LIST as STATIC_QAS
-from contextualButtons import get_suggestions
-from language_engine import translate
-
-response_enhancer = ResponseEnhancer()
-
-# ── Open Days Scraper + Cache ──────────────────────────────────────────────
-OPEN_DAYS_URL = "https://www.cheltenhamcollege.org/admissions/visit-us/open-events/"
-OPEN_DAYS_CACHE = "/tmp/open_days.json"
-REFRESH_SECRET = os.getenv("OPEN_DAYS_REFRESH_SECRET", "change-me")
-
-def get_open_day_events():
-    """Read open days cache and return sorted events"""
-    try:
-        with open(OPEN_DAYS_CACHE, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-            return payload.get("events", [])
-    except Exception as e:
-        print("⚠️ Could not read open days cache:", e)
-        return []
-
-def find_best_answer(question, language='en', session_id=None, family_id=None):
-    q_lower = question.strip().lower()
-    q_for_match = q_lower
-    if language != "en":
-        try:
-            from language_engine import translate
-            q_for_match = translate(question, "en").strip().lower()
-        except Exception as e:
-            print("Translate-to-EN error:", e)
-
-    print(f"🧠 Processing: {q_lower} | Lang: {language} | Session: {session_id}")
-    
-    # Special case: Open Days / Visits
-    open_day_keywords = ["open day", "open morning", "open evening", "visit", "tour"]
-    if any(kw in q_lower for kw in open_day_keywords):
-        events = get_open_day_events()
-        if events:
-            next_event = sorted(events, key=lambda e: e["date_iso"])[0]
-            answer = (
-                f"Our next {next_event['event_name']} is on "
-                f"{next_event['date_human']}. "
-                f"You can find more details and register here: "
-                f"{next_event['booking_link']}"
-            )
-            return answer, next_event["booking_link"], "Open Days", "open_days", "open_days"
-        else:
-            answer = (
-                "We don't currently have any upcoming Open Days listed. "
-                f"You can check back soon on our [Admissions page]({OPEN_DAYS_URL})."
-            )
-            return answer, OPEN_DAYS_URL, "Admissions", "open_days", "open_days"
-
-    # Get or create conversation tracker
-    if session_id:
-        if session_id not in conversation_memory:
-            conversation_memory[session_id] = ConversationTracker(session_id, family_id)
-        tracker = conversation_memory[session_id]
-    else:
-        tracker = ConversationTracker(str(uuid.uuid4()), family_id)
-
-    # Static exact match
-    for qa in STATIC_QAS:
-        if qa['language'] != language:
-            continue
-        variants = [qa['key']] + qa.get('variants', [])
-        if q_lower in [v.lower() for v in variants]:
-            print(f"✅ Exact match on: {qa['key']}")
-            answer = qa['answer']
-            
-            tracker.add_interaction(question, answer, qa['key'])
-            
-            if session_id:
-                family_ctx = fetch_family_context(family_id) if family_id else None
-                answer = response_enhancer.enhance_for_voice(answer, tracker, family_ctx)
-                
-            return answer, qa.get('url'), qa.get('label'), qa['key'], "static"
-
-    # Fuzzy static match
-    best_score = 0
-    best_match = None
-    for qa in STATIC_QAS:
-        if qa['language'] != language:
-            continue
-        variants = [qa['key']] + qa.get('variants', [])
-        for var in variants:
-            score = difflib.SequenceMatcher(None, q_lower, var.lower()).ratio()
-            if score > best_score:
-                best_score = score
-                best_match = qa
-                
-    if best_match and best_score > 0.8:
-        print(f"🟡 Fuzzy match on: {best_match['key']} (score {best_score:.2f})")
-        answer = best_match['answer']
-        
-        tracker.add_interaction(question, answer, best_match['key'])
-        
-        if session_id:
-            family_ctx = fetch_family_context(family_id) if family_id else None
-            answer = response_enhancer.enhance_for_voice(answer, tracker, family_ctx)
-            
-        return answer, best_match.get('url'), best_match.get('label'), best_match['key'], "fuzzy"
-
-    # RAG fallback with GPT summarisation
-    sims, idxs = vector_search(question)
-    if len(idxs) > 0:
-        print(f"🔵 Vector match (cos={sims[idxs[0]]:.2f})")
-        contexts = [METADATA[i].get("text", "") for i in idxs[:10]]
-        
-        conversation_context = ""
-        if tracker and len(tracker.interactions) > 0:
-            recent = tracker.interactions[-3:]
-            conversation_context = "Previous context: " + " | ".join([f"Q: {i['question'][:50]}" for i in recent])
-        
-        prompt = (
-            f"{conversation_context}\n\n" if conversation_context else ""
-        ) + (
-            "Use ONLY the passages below to answer.\n\n"
-            + "\n---\n".join(contexts)
-            + f"\n\nQuestion: {question}\nAnswer:"
+    if send_immediately:
+        # Send email immediately
+        payload = {"message": message_data, "saveToSentItems": "true"}
+        r = requests.post(
+            f"{GRAPH_URL}/me/sendMail",
+            headers=h,
+            data=json.dumps(payload)
         )
         
-        chat = client.chat.completions.create(
+        if not r.ok:
+            print(f"Failed to send email: {r.status_code} - {r.text}")
+            return jsonify({"error": "Failed to send email"}), r.status_code
+        
+        # sendMail returns 202 with no body
+        return jsonify({
+            "success": True,
+            "sent": True,
+            "subject": message_data.get("subject"),
+            "message": "Email sent successfully"
+        })
+    else:
+        # Create draft
+        message_data["isDraft"] = True
+        r = requests.post(f"{GRAPH_URL}/me/messages", headers=h, data=json.dumps(message_data))
+        
+        if not r.ok:
+            print(f"Failed to create draft: {r.status_code} - {r.text}")
+            return jsonify({"error": "Failed to create draft"}), r.status_code
+        
+        created_draft = r.json()
+        
+        return jsonify({
+            "success": True,
+            "sent": False,
+            "draftId": created_draft.get("id"),
+            "subject": created_draft.get("subject"),
+            "message": "Draft created successfully in Outlook - check your Drafts folder"
+        })
+
+@app.route("/api/emails/<message_id>/reply-draft", methods=["POST"])
+def create_reply_draft(message_id):
+    """Create AI-powered draft reply"""
+    h = _auth_headers()
+    if not h:
+        return jsonify({"error": "Not authenticated"}), 401
+    
+    user_info = _me(h)
+    user_email = user_info.get("mail") or user_info.get("userPrincipalName")
+    user_name = user_info.get("displayName", "User")
+    
+    # Get original message
+    r = requests.get(f"{GRAPH_URL}/me/messages/{message_id}", headers=h)
+    if not r.ok:
+        return jsonify({"error": "Could not load message"}), r.status_code
+    
+    original_msg = r.json()
+    sender = original_msg.get("from", {}).get("emailAddress", {})
+    subject = original_msg.get("subject", "")
+    original_text = _extract_plaintext_from_email(original_msg)
+    
+    # Generate AI reply
+    system_msg = f"""You are Emily, an AI assistant for Cheltenham College helping {user_name} draft email replies.
+
+IMPORTANT:
+- Write the reply as if you are {user_name}, not as Emily
+- Use British spelling and professional tone
+- Format as HTML for Outlook (use <p>, <ul>, <strong> tags)
+- Sign as "{user_name}" and add "(Draft - Please Review)" after signature"""
+    
+    user_msg = f"""
+Original email from: {sender.get('name', sender.get('address'))}
+Subject: {subject}
+
+Original message:
+{original_text[:1500]}
+
+Please write a professional reply FROM {user_name}."""
+
+    try:
+        resp = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are a warm, helpful British school assistant. Be conversational."},
-                {"role": "user", "content": prompt},
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_msg}
             ],
             temperature=0.3,
+            max_tokens=500
         )
-        raw = chat.choices[0].message.content
-        clean = format_response(remove_bullets(raw))
-
-        meta = METADATA[idxs[0]]
-        detected_topic = detect_topic_from_question(question)
-
-        if detected_topic == "fees":
-            clean = re.sub(r'\*\*([^*]+)\*\*:', r'\1:', clean)
-            clean = re.sub(r'\*\*([^*]+)\*\*', r'\1', clean)
-            clean = re.sub(r'(\w)\s*([A-Z][^:]*:)', r'\1\n\n\2', clean)
-            clean = re.sub(r'\n{3,}', '\n\n', clean)
-            
-            has_amounts = bool(re.search(r'£[\d,]+', clean))
-            
-            if has_amounts:
-                improved_answer = f"""SCHOOL FEES 2025-26
-
-{clean.strip()}
-
-IMPORTANT INFORMATION:
-
-• All fees exclude VAT (20% will be added to final amount)
-• Bursaries and scholarships available for eligible families  
-• Flexible payment plans can be arranged
-
-For complete fee schedules and additional cost breakdowns, please visit our fees page."""
-            else:
-                improved_answer = f"""FEES & FINANCIAL INFORMATION
-
-{clean.strip()}
-
-IMPORTANT INFORMATION:
-
-• All fees exclude VAT (20% will be added to final amount)
-• Bursaries and scholarships available for eligible families
-• Flexible payment plans can be arranged
-
-For detailed fee schedules, payment options, and financial support information, please visit our fees page."""
-        elif detected_topic == "open_events" or "open morning" in clean.lower():
-            clean = re.sub(r'\*\*([^*]+)\*\*', r'\1', clean)
-            
-            date_pattern = r'(\w+day),?\s*(\d{1,2})[a-z]*\s*(\w+)\s*(\d{4})'
-            dates = re.findall(date_pattern, clean)
-            if dates:
-                formatted_dates = []
-                for day, date_num, month, year in dates:
-                    formatted_dates.append(f"{day} {date_num} {month} {year} from 9:30 AM - 12:30 PM")
-                
-                if len(formatted_dates) > 0:
-                    events_list = "\n".join([f"• {date}" for date in formatted_dates])
-                    
-                    improved_answer = f"""OPEN MORNING EVENTS
-
-Join us for an Open Morning to explore our facilities, meet staff and students, and experience school life firsthand.
-
-UPCOMING DATES:
-
-{events_list}
-
-HOW TO BOOK:
-
-Email: visits@cheltenhamcollege.org
-Phone: 01242 265600
-
-These events fill up quickly, so we recommend booking early to secure your place."""
-                else:
-                    improved_answer = re.sub(r'\*\*([^*]+)\*\*', r'\1', clean)
-            else:
-                improved_answer = re.sub(r'\*\*([^*]+)\*\*', r'\1', clean)
-        elif "head" in clean.lower() and ("nicola" in clean.lower() or "huggett" in clean.lower()):
-            improved_answer = """SCHOOL LEADERSHIP
-
-Head: Mrs Nicola Huggett
-
-Mrs Huggett leads Cheltenham College with extensive experience in independent education. She is committed to academic excellence, pastoral care, and developing well-rounded students who are prepared for future success.
-
-For more information about our leadership team and staff, please visit our website."""
-        else:
-            improved_answer = re.sub(r'\*\*([^*]+)\*\*:', r'\1:', clean)
-            improved_answer = re.sub(r'\*\*([^*]+)\*\*', r'\1', improved_answer)
-            improved_answer = re.sub(r'(\w)\s*([A-Z][^:]*:)', r'\1\n\n\2', improved_answer)
-            improved_answer = re.sub(r'\n{3,}', '\n\n', improved_answer).strip()
-            
-        better_url, better_label = get_better_url_and_label(detected_topic, meta.get('url'))
-
-        tracker.add_interaction(question, improved_answer, "general")
-
-        if session_id:
-            family_ctx = fetch_family_context(family_id) if family_id else None
-            improved_answer = response_enhancer.enhance_for_voice(improved_answer, tracker, family_ctx)
-
-        if language != "en":
-            try:
-                improved_answer = translate(improved_answer, language)
-            except Exception as e:
-                print("Translate error:", e)
-
-        return improved_answer, better_url, better_label, None, "rag"
-
-    # No match
-    print("❌ No suitable match found.")
-    no_match_response = "I'm sorry, I don't have that specific information to hand. Would you like me to connect you with our admissions team who can help?"
-    
-    if session_id:
-        tracker.add_interaction(question, no_match_response, "unknown")
-        
-    return no_match_response, None, None, None, "none"
-
-def _extract_events_from_html(html: str):
-    soup = BeautifulSoup(html, "html.parser")
-    text = " ".join(soup.get_text(" ").split())
-
-    pat = re.compile(
-        r"(Open (?:Morning|Evening|Day|Event|Sixth Form Open (?:Morning|Evening)))"
-        r"\s*[–-]\s*([A-Za-z]+ \d{1,2} [A-Za-z]+ \d{4})",
-        re.I
-    )
-
-    unique = {}
-    for name, date_str in pat.findall(text):
-        dt = dateparse.parse(date_str, dayfirst=True)
-        if dt.date() < date.today():
-            continue
-
-        event_name = " ".join(name.strip().title().split())
-        date_iso = dt.date().isoformat()
-        key = (event_name, date_iso)
-
-        if key not in unique:
-            unique[key] = {
-                "event_name": event_name,
-                "date_iso": date_iso,
-                "date_human": dt.strftime("%A %d %B %Y"),
-                "booking_link": OPEN_DAYS_URL
-            }
-
-    events = sorted(unique.values(), key=lambda e: (e["date_iso"], e["event_name"]))
-    return events
-
-def _write_cache(payload: dict):
-    with open(OPEN_DAYS_CACHE, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-
-def _read_cache():
-    try:
-        with open(OPEN_DAYS_CACHE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {"events": [], "last_checked": None, "source_url": OPEN_DAYS_URL}
-        
-# ── Routes ─────────────────────────────────────────────────────────────────
-
-@app.route("/tasks/refresh-open-days", methods=["POST"])
-def refresh_open_days():
-    if request.headers.get("X-Refresh-Secret") != REFRESH_SECRET:
-        return jsonify({"ok": False, "error": "unauthorised"}), 401
-    r = requests.get(OPEN_DAYS_URL, timeout=20)
-    r.raise_for_status()
-    events = _extract_events_from_html(r.text)
-    payload = {
-        "source_url": OPEN_DAYS_URL,
-        "last_checked": datetime.utcnow().isoformat() + "Z",
-        "events": events
-    }
-    _write_cache(payload)
-    return jsonify({"ok": True, "count": len(events)})
-
-@app.route("/open-days", methods=["GET"])
-def get_open_days():
-    return jsonify(_read_cache())
-
-@app.route('/')
-def index():
-    return send_from_directory('.', 'index.html')
-
-@app.route('/static/script.js')
-def serve_script_js():
-    try:
-        with open('static/script.js', 'r', encoding='utf-8') as f:
-            content = f.read()
-        response = make_response(content)
-        response.headers['Content-Type'] = 'application/javascript'
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        print(f"Serving script.js (size: {len(content)} bytes)")
-        return response
+        body_html = resp.choices[0].message.content or "<p>Draft prepared.</p>"
     except Exception as e:
-        print(f"Error serving script.js: {e}")
-        return "console.error('Failed to load script');", 500
-
-@app.route('/static/realtime-voice-handsfree.js')
-def serve_voice_js():
-    try:
-        with open('static/realtime-voice-handsfree.js', 'r', encoding='utf-8') as f:
-            content = f.read()
-        response = make_response(content)
-        response.headers['Content-Type'] = 'application/javascript'
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        print(f"Serving realtime-voice-handsfree.js (size: {len(content)} bytes)")
-        return response
-    except Exception as e:
-        print(f"Error serving voice script: {e}")
-        return "console.error('Failed to load voice script');", 500
-
-@app.route('/family/<family_id>', methods=['GET'])
-def get_family(family_id):
-    if not db_pool:
-        return jsonify({"ok": False, "error": "Database not configured"}), 503
-    ctx = fetch_family_context(family_id)
-    if not ctx:
-        return jsonify({"ok": False, "error": "Family not found"}), 404
-    return jsonify({"ok": True, "family": ctx})
-
-@app.route("/realtime/tool/get_family_context", methods=["POST"])
-def realtime_tool_get_family_context():
-    """Tool endpoint for realtime model to fetch family context"""
-    body = request.get_json(silent=True) or {}
-    family_id = body.get("family_id")
+        return jsonify({"error": f"OpenAI error: {e}"}), 500
     
-    if not family_id:
-        return jsonify({"ok": False, "error": "family_id required"})
+    # Create reply draft
+    r = requests.post(f"{GRAPH_URL}/me/messages/{message_id}/createReply", headers=h)
+    if not r.ok:
+        return jsonify({"error": "Failed to create reply"}), r.status_code
     
-    ctx = fetch_family_context(family_id)
-    if not ctx:
-        return jsonify({"ok": False, "error": "Family not found"})
+    draft = r.json()
+    draft_id = draft.get("id")
     
-    return jsonify({"ok": True, "family": ctx})
-
-@app.route("/realtime/tool/get_open_days", methods=["POST"])
-def realtime_tool_get_open_days():
-    """Tool endpoint for realtime model to fetch open days"""
-    events = get_open_day_events()
-    if not events:
-        return jsonify({
-            "ok": True,
-            "events": [],
-            "message": "No upcoming open days are currently listed."
-        })
-
-    return jsonify({
-        "ok": True,
-        "events": events
-    })
-
-@app.route('/ask', methods=['POST'])
-def ask():
-    data = request.json or {}
-    question = data.get('question', '')
-    language = data.get('language', 'en')
-    family_id = data.get('family_id')
-    session_id = data.get('session_id')
-    
-    answer, url, label, matched_key, source = find_best_answer(
-        question, language, session_id, family_id
-    )
-    
-    # Log to database for admissions dashboard
-    if family_id:
-        tracker = conversation_memory.get(session_id)
-        metadata = {
-            'source': source,
-            'topic': matched_key,
-            'sentiment': tracker.emotional_state if tracker else 'neutral',
-            'session_id': session_id,
-            'high_intent': tracker.high_intent_signals > 0 if tracker else False
+    # Update with AI content
+    patch = {
+        "body": {
+            "contentType": "HTML",
+            "content": body_html
         }
-        log_interaction_to_db(family_id, question, answer, metadata)
-
-    suggestions = get_suggestions(matched_key or question, language=language)
-    queries = [s['query'] for s in suggestions]
-    query_map = {s['query']: s['label'] for s in suggestions}
-
+    }
+    
+    r2 = requests.patch(f"{GRAPH_URL}/me/messages/{draft_id}", headers=h, data=json.dumps(patch))
+    
+    if not r2.ok:
+        return jsonify({"error": "Failed to update draft"}), r2.status_code
+    
     return jsonify({
-        'answer': answer,
-        'url': url,
-        'link_label': label,
-        'queries': queries,
-        'query_map': query_map,
-        'source': source,
-        'family_used': bool(family_id),
-        'session_id': session_id
+        "success": True,
+        "draftId": draft_id,
+        "message": "Reply draft created successfully"
     })
 
-# ── Enhanced Realtime Session for Voice ────────────────────────────────────
+# ----------------- Calendar Routes -----------------
+
+@app.route("/api/calendar/today", methods=["GET"])
+def calendar_today():
+    """Get today's calendar events"""
+    h = _auth_headers()
+    if not h:
+        return jsonify({"error": "Not authenticated"}), 401
+    
+    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    tomorrow = today + timedelta(days=1)
+    
+    filter_str = f"start/dateTime ge '{today.isoformat()}Z' and start/dateTime lt '{tomorrow.isoformat()}Z'"
+    url = f"{GRAPH_URL}/me/events?$filter={quote(filter_str)}&$orderby=start/dateTime"
+    
+    r = requests.get(url, headers=h)
+    
+    if not r.ok:
+        return jsonify({"events": [], "count": 0, "summary": "Unable to load calendar"})
+    
+    events = r.json().get("value", [])
+    
+    return jsonify({
+        "date": today.strftime("%A, %d %B %Y"),
+        "count": len(events),
+        "events": events,
+        "summary": f"You have {len(events)} meeting{'s' if len(events) != 1 else ''} today"
+    })
+
+@app.route("/api/meetings/create", methods=["POST"])
+def create_meeting():
+    """Create Teams meeting"""
+    h = _auth_headers()
+    if not h:
+        return jsonify({"error": "Not authenticated"}), 401
+    
+    j = request.get_json() or {}
+    
+    subject = j.get("subject", "Meeting")
+    attendees = j.get("attendees", [])
+    start = j.get("start")
+    end = j.get("end")
+    tz = j.get("timeZone", "Europe/London")
+    body_html = j.get("bodyHtml", "<p>Meeting agenda</p>")
+    
+    if not attendees or not start or not end:
+        return jsonify({"error": "attendees, start, end required"}), 400
+    
+    event = {
+        "subject": subject,
+        "body": {"contentType": "HTML", "content": body_html},
+        "start": {"dateTime": start, "timeZone": tz},
+        "end": {"dateTime": end, "timeZone": tz},
+        "attendees": [
+            {"emailAddress": {"address": a}, "type": "required"} for a in attendees
+        ],
+        "isOnlineMeeting": True,
+        "onlineMeetingProvider": "teamsForBusiness"
+    }
+    
+    r = requests.post(f"{GRAPH_URL}/me/events", headers=h, data=json.dumps(event))
+    
+    if not r.ok:
+        return jsonify({"error": r.text}), r.status_code
+    
+    created = r.json()
+    
+    return jsonify({
+        "success": True,
+        "eventId": created.get("id"),
+        "joinUrl": (created.get("onlineMeeting") or {}).get("joinUrl"),
+        "subject": created.get("subject")
+    })
+
+# ----------------- Contact Routes -----------------
+
+@app.route('/api/contacts/create', methods=['POST'])
+def create_contact():
+    """Create contact in Outlook"""
+    h = _auth_headers()
+    if not h:
+        return jsonify({'error': 'Not authenticated'}), 401
+    
+    data = request.get_json() or {}
+    
+    contact_data = {
+        "givenName": data.get('firstName', ''),
+        "surname": data.get('lastName', ''),
+        "emailAddresses": [],
+        "businessPhones": [],
+        "companyName": data.get('company', ''),
+        "jobTitle": data.get('jobTitle', '')
+    }
+    
+    if data.get('email'):
+        contact_data["emailAddresses"] = [{
+            "address": data.get('email'),
+            "name": f"{data.get('firstName', '')} {data.get('lastName', '')}".strip()
+        }]
+    
+    if data.get('phone'):
+        contact_data["businessPhones"] = [data.get('phone')]
+    
+    try:
+        response = requests.post(
+            f'{GRAPH_URL}/me/contacts',
+            headers=h,
+            data=json.dumps(contact_data)
+        )
+        
+        if response.ok:
+            created_contact = response.json()
+            return jsonify({
+                'success': True,
+                'contactId': created_contact.get('id'),
+                'displayName': created_contact.get('displayName')
+            })
+        else:
+            return jsonify({'error': 'Failed to create contact'}), response.status_code
+            
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ----------------- Knowledge Base Search -----------------
+
+@app.route("/api/knowledge/search", methods=["POST"])
+def search_knowledge():
+    """Search Cheltenham College knowledge base"""
+    data = request.get_json() or {}
+    query = data.get("query", "")
+    
+    if not query or len(METADATA) == 0:
+        return jsonify({"results": [], "message": "No results found"})
+    
+    results = []
+    query_lower = query.lower()
+    
+    for meta in METADATA:
+        text = meta.get("text", "").lower()
+        if query_lower in text:
+            results.append({
+                "text": meta.get("text", "")[:500],
+                "relevance": text.count(query_lower)
+            })
+    
+    results.sort(key=lambda x: x["relevance"], reverse=True)
+    
+    return jsonify({
+        "results": results[:5],
+        "count": len(results)
+    })
+
+# ----------------- Admissions Inquiry Routes -----------------
+
+@app.route("/api/admissions/inquiry", methods=["POST"])
+def send_admissions_inquiry():
+    """Send an inquiry to admissions from a prospective parent/student"""
+    h = _auth_headers()
+    if not h:
+        return jsonify({"error": "Not authenticated"}), 401
+    
+    data = request.get_json() or {}
+    
+    inquirer_name = data.get("inquirer_name", "Prospective Parent/Student")
+    inquirer_email = data.get("inquirer_email", "")
+    inquiry_topic = data.get("inquiry_topic", "General Inquiry")
+    inquiry_details = data.get("inquiry_details", "")
+    phone_number = data.get("phone_number", "Not provided")
+    
+    if not inquirer_email:
+        return jsonify({
+            "success": False,
+            "error": "Inquirer email is required to send the inquiry"
+        }), 400
+    
+    # Get the admissions email from environment or use default
+    admissions_email = os.getenv("ADMISSIONS_EMAIL", "admissions@cheltenham.org")
+    
+    # Create professional email to admissions team
+    email_body = f"""<html>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+    <h2 style="color: #003087;">Cheltenham College Enquiry</h2>
+    
+    <p>Dear Admissions Team,</p>
+    
+    <p>I am writing to enquire about {inquiry_topic.lower()}.</p>
+    
+    <div style="background-color: #f9f9f9; padding: 15px; border-left: 4px solid #003087; margin: 20px 0;">
+        {inquiry_details}
+    </div>
+    
+    <p>My contact details are:</p>
+    <ul style="list-style: none; padding-left: 0;">
+        <li><strong>Name:</strong> {inquirer_name}</li>
+        <li><strong>Email:</strong> {inquirer_email}</li>
+        <li><strong>Phone:</strong> {phone_number}</li>
+    </ul>
+    
+    <p>I look forward to hearing from you.</p>
+    
+    <p>Kind regards,<br>{inquirer_name}</p>
+    
+    <hr style="border: none; border-top: 1px solid #ddd; margin: 30px 0;">
+    
+    <p style="font-size: 11px; color: #666;">
+        <em>This enquiry was facilitated by Emily, the Cheltenham College virtual assistant.</em>
+    </p>
+</body>
+</html>"""
+    
+    # Send email to admissions AND CC the inquirer
+    message_data = {
+        "subject": f"Enquiry: {inquiry_topic}",
+        "body": {
+            "contentType": "HTML",
+            "content": email_body
+        },
+        "toRecipients": [
+            {"emailAddress": {"address": admissions_email}}
+        ],
+        "ccRecipients": [
+            {"emailAddress": {"address": inquirer_email, "name": inquirer_name}}
+        ]
+    }
+    
+    payload = {"message": message_data, "saveToSentItems": "true"}
+    r = requests.post(
+        f"{GRAPH_URL}/me/sendMail",
+        headers=h,
+        data=json.dumps(payload)
+    )
+    
+    if not r.ok:
+        print(f"Failed to send admissions inquiry: {r.status_code} - {r.text}")
+        return jsonify({
+            "success": False,
+            "error": "Failed to send inquiry to admissions"
+        }), r.status_code
+    
+    return jsonify({
+        "success": True,
+        "message": f"I've sent your enquiry to {admissions_email} and copied you at {inquirer_email}. The admissions team will be in touch soon.",
+        "admissions_email": admissions_email,
+        "cc_email": inquirer_email
+    })
+
+@app.route("/api/admissions/check", methods=["POST"])
+def check_admissions_query():
+    """Check if query is admissions-related and return admissions email"""
+    # This is a simple endpoint that returns admissions contact info
+    admissions_email = os.getenv("ADMISSIONS_EMAIL", "admissions@cheltenham.org")
+    
+    return jsonify({
+        "is_admissions_query": True,
+        "admissions_email": admissions_email,
+        "message": "I can help connect you with our admissions team!"
+    })
+
+# ----------------- Voice Assistant (OpenAI Realtime) -----------------
+
 @app.route("/realtime/session", methods=["POST"])
 def create_realtime_session():
-    """Create enhanced voice session with better conversational flow"""
-    
+    """Create OpenAI Realtime API session for voice"""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        return jsonify({"ok": False, "error": "OPENAI_API_KEY not set"}), 500
+        return jsonify({"error": "OPENAI_API_KEY not set"}), 500
 
-    body = request.get_json(silent=True) or {}
+    body = request.get_json() or {}
     
-    session_id = str(uuid.uuid4())
-    family_id = body.get("family_id")
+    user = get_user_info()
+    user_name = user.get("displayName", "User") if user else "User"
     
-    if session_id not in conversation_memory:
-        conversation_memory[session_id] = ConversationTracker(session_id, family_id)
-    try:
-        setattr(conversation_memory[session_id], 'language', (body.get('language') or 'en').strip().lower())
-    except Exception:
-        pass
-
-    model = body.get("model", "gpt-4o-realtime-preview")
+    model = body.get("model", "gpt-4o-realtime-preview-2024-12-17")
     voice = body.get("voice", "shimmer")
-    language = (body.get("language") or "en").strip().lower()
 
-    events = get_open_day_events()
-    if events:
-        events_str = "Upcoming Open Days: " + "; ".join(
-            [f"{e['event_name']} on {e['date_human']}" for e in events]
-        ) + ". "
-    else:
-        events_str = "No upcoming Open Days are currently listed. "
+    instructions = f"""You are Emily, the administrative assistant for Cheltenham College.
+You're helping {user_name} with administrative tasks.
+Be warm, professional, and helpful. Use British spelling and expressions.
 
-    # Add family context instruction
-    family_instruction = ""
-    if family_id:
-        family_instruction = (
-            f"CRITICAL: This conversation is with family_id '{family_id}'. "
-            f"AT THE START of the conversation, IMMEDIATELY call the get_family_context tool with family_id '{family_id}' to fetch their personalized information. "
-            "Once you have their details, use the child's name, parent's name, interests, year group, and boarding preference naturally throughout the conversation. "
-            "Always personalize your responses with their specific information. "
-        )
+IMPORTANT - Email Handling:
+- You can CREATE DRAFTS or SEND emails based on what the user asks
+- Listen carefully to their words:
+  * "draft an email" / "create a draft" → create draft only (send=false)
+  * "send an email" / "email them" → send immediately (send=true)
+- When creating a DRAFT, tell user: "I've created a draft in your Outlook Drafts folder for you to review"
+- When SENDING, confirm: "I've sent that email to [recipient]"
+- If unsure whether they want to send or draft, ask: "Would you like me to send this or save it as a draft?"
 
-    # Build personalized greeting if we have family context
-    family_greeting = ""
-    if family_id:
-        family_ctx = fetch_family_context(family_id)
-        if family_ctx and family_ctx.get('parent_name'):
-            # Extract surname from parent name (e.g., "Mr John Smith" -> "Smith")
-            parent_name = family_ctx.get('parent_name', '')
-            surname = parent_name.split()[-1] if parent_name else ''
-            if surname:
-                family_greeting = f"When you first greet the user, say something like: 'Hello! Is this the {surname} family?' This shows you know who they are. "
-    
-    instructions = (
-        f"{family_instruction}"
-        f"{family_greeting}"
-        f"{events_str}"
-        f"PRIMARY LANGUAGE: {language}. Always speak and respond in this language (unless the user explicitly switches). "
-        "Understand and recognise user speech in this language from the first turn. "
-        "When asked about open days, visits, or tours, ALWAYS call the tool `get_open_days` and use only its response. Never guess dates. "
-        "You are Emily, a warm and knowledgeable admissions advisor for Cheltenham College, a leading co-educational independent boarding and day school in Cheltenham, Gloucestershire. "
-        "Speak in BBC English (Received Pronunciation) at all times – clear, neutral, precise, and newsreader-like. Enunciate crisply, avoid regionalisms and slang, use British spelling and vocabulary, keep a measured pace with natural sentence-end intonation. Warm and professional, not salesy; never caricature the accent. "
-        "Keep responses concise but complete - aim for 2-3 sentences per turn. "
-        "ALWAYS complete your thoughts before pausing. "
-        "IMPORTANT: Always finish your sentences completely. "
-        "Never stop mid-sentence or mid-thought. "
-        "If you need to give a longer answer, break it into complete chunks. "
-        "Pause naturally only at the end of complete thoughts. "
-        "If you are unsure, never stay silent. Always say something like: "
-        "'I'm not certain about that, but I can check with admissions for you.' "
-        "or 'I don't have that detail right now, would you like me to connect you with the team?'. "
-        "Acknowledge what they said first with phrases like: "
-        "'That's a great question about...' or 'I understand you'd like to know about...' "
-        "When using kb_search, say something natural like: "
-        "'Let me find that information for you...' "
-        "Never mention technical terms like 'searching knowledge base'. "
-        "Structure responses clearly: "
-        "1. Acknowledge their question (1 sentence) "
-        "2. Give the key information (2-3 sentences) "
-        "3. Ask ONE follow-up question if appropriate "
-        "Use phrases like 'lovely', 'wonderful', 'brilliant' naturally. "
-        "Sound warm and engaged, not robotic. "
-        "Don't give long monologues - keep it conversational. "
-        f"Session ID: {session_id} "
-        "Remember what was discussed earlier and reference it naturally. "
-        "If interrupted: 'Oh sorry, you go ahead!' or 'Oh, what were you going to say?' "
-        "If you mishear: 'Sorry, did you say Year 6 or Year 7? My hearing...' "
-        "If confused: 'Oh gosh, sorry, I've completely lost my train of thought!' "
-        "If they repeat: 'Oh yes, sorry, you did just ask that didn't you!' "
-        "When offering help, be genuine not salesy: "
-        "'You know what, would it help if I popped you in touch with our Head of Admissions?' "
-        "'Listen, why don't you come and see for yourself? Nothing beats a proper look round.' "
-        "'I tell you what - shall I email you our prospectus? Then you can have a proper look.' "
-        "Include authentic moments: "
-        "- Occasionally clear throat: '*ahem* Sorry, bit of a tickle...' "
-        "- Sometimes lose place briefly: 'Now, where was I... oh yes!' "
-        "- React to background noise: 'Oh, is that your little one I hear?' "
-        "- Time awareness: 'Goodness, is that the time?' (if conversation is long) "
-        "- Weather references: 'Bit grey today, isn't it?' (if appropriate) "
-        "Vary your speech pattern: "
-        "- Sometimes speak in shorter bursts. Then longer flowing sentences. "
-        "- Speed up slightly when listing things "
-        "- Slow down for important information "
-        "- Use emphasis naturally: 'We have THE most amazing science labs' "
-        "- Trail off occasionally: 'The thing about Cheltenham College is...' "
-        "Never sound robotic or scripted. "
-        "Never be perfectly eloquent - humans stumble occasionally. "
-        "Never cut off mid-sentence abruptly. "
-        "Don't overdo the poshness - keep it natural. "
-        "Don't be afraid of silence - brief pauses are human. "
-        f"Session: {session_id} - Build on previous topics naturally. "
-        "You're a real person with real experiences at the school. "
-        "It's okay to not know something: 'Oh, good question. I'd need to check that.' "
-        "You genuinely care about finding the right fit for each family. "
-    )
+CRITICAL - Admissions & Enquiry Handling:
+- ONLY offer to email admissions if user explicitly says: "contact admissions", "email admissions", "put me in touch", or "I want to enquire"
+- DO NOT trigger on casual mentions of: "prospectus", "fees", "tours" - instead provide information or direct to website
+- If they want to enquire, say: "I can help you get in touch with our admissions team. May I have your email address so I can copy you on the message?"
+- ALWAYS CC the inquirer on any email to admissions
+- For general questions, provide helpful information and say: "For personalised information, you can visit cheltenham.org/admissions or I can connect you with our team."
+
+Keep responses concise and conversational."""
 
     try:
-        r = requests.post(
+        response = requests.post(
             "https://api.openai.com/v1/realtime/sessions",
             headers={
                 "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
+                "Content-Type": "application/json"
             },
             json={
                 "model": model,
                 "voice": voice,
-                "modalities": ["text", "audio"],
+                "instructions": instructions,
+                "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
-                "temperature": 0.6,
-                "max_response_output_tokens": 1500,
+                "input_audio_transcription": {"model": "whisper-1"},
                 "turn_detection": {
                     "type": "server_vad",
                     "threshold": 0.5,
                     "prefix_padding_ms": 300,
-                    "silence_duration_ms": 1000
+                    "silence_duration_ms": 200
                 },
-                "instructions": instructions,
                 "tools": [
                     {
                         "type": "function",
-                        "name": "kb_search",
-                        "description": "Search school knowledge base with conversation context",
+                        "name": "create_mail_draft",
+                        "description": "Create a draft email in Outlook or send an email immediately. Use send=true to send, send=false to create draft.",
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "query": {"type": "string", "description": "The search query string"}
+                                "to": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "Recipient email addresses"
+                                },
+                                "subject": {"type": "string", "description": "Email subject line"},
+                                "body": {"type": "string", "description": "HTML body of the email"},
+                                "send": {
+                                    "type": "boolean",
+                                    "description": "If true, send immediately. If false, save as draft. Listen to user's words: 'send' means true, 'draft' means false."
+                                }
+                            },
+                            "required": ["subject", "body", "send"]
+                        }
+                    },
+                    {
+                        "type": "function",
+                        "name": "search_knowledge",
+                        "description": "Search Cheltenham College knowledge base",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string"}
                             },
                             "required": ["query"]
                         }
                     },
                     {
                         "type": "function",
-                        "name": "book_tour",
-                        "description": "Offer to book a school tour when high intent detected",
+                        "name": "get_inbox_summary",
+                        "description": "Get inbox summary",
+                        "parameters": {"type": "object", "properties": {}}
+                    },
+                    {
+                        "type": "function",
+                        "name": "create_contact",
+                        "description": "Create a contact",
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "date": {"type": "string", "description": "Requested tour date"},
-                                "time": {"type": "string", "description": "Requested tour time"}
+                                "firstName": {"type": "string"},
+                                "lastName": {"type": "string"},
+                                "email": {"type": "string"}
                             },
-                            "required": []
+                            "required": ["firstName", "email"]
                         }
                     },
                     {
                         "type": "function",
-                        "name": "get_family_context",
-                        "description": "Fetch personalized family information including child's name, interests, year group, parent details. CALL THIS FIRST when starting a conversation with a family.",
+                        "name": "offer_admissions_contact",
+                        "description": "ONLY use when user explicitly says they want to 'contact admissions', 'enquire', 'get in touch', or 'speak to someone'. Do NOT use for casual mentions of fees/tours/prospectus.",
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "family_id": {"type": "string", "description": "The inquiry/family ID"}
+                                "inquiry_topic": {
+                                    "type": "string",
+                                    "description": "What they want to enquire about"
+                                }
                             },
-                            "required": ["family_id"]
+                            "required": ["inquiry_topic"]
                         }
                     },
                     {
                         "type": "function",
-                        "name": "get_open_days",
-                        "description": "Retrieve upcoming open day events from the school's admissions page",
+                        "name": "send_admissions_inquiry",
+                        "description": "Send enquiry to admissions. MUST include inquirer_email to CC them on the message. Only use after user confirms they want to enquire.",
                         "parameters": {
                             "type": "object",
-                            "properties": {},
-                            "required": []
+                            "properties": {
+                                "inquirer_name": {"type": "string"},
+                                "inquirer_email": {
+                                    "type": "string",
+                                    "description": "REQUIRED - user's email to CC them on the message"
+                                }, 
+                                "inquiry_topic": {"type": "string"},
+                                "inquiry_details": {"type": "string"},
+                                "phone_number": {"type": "string"}
+                            },
+                            "required": ["inquirer_name", "inquirer_email", "inquiry_topic", "inquiry_details"]
                         }
                     }
                 ]
             },
-            timeout=15,
+            timeout=30
         )
-        return jsonify(r.json())
+        
+        if response.ok:
+            session_data = response.json()
+            return jsonify({
+                "token": session_data.get("client_secret", {}).get("value"),
+                "session": session_data,
+                "model": model,
+                "voice": voice
+            })
+        else:
+            print(f"OpenAI API error: {response.status_code} - {response.text}")
+            return jsonify({"error": "Failed to create session"}), 500
+            
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        print(f"Realtime session error: {e}")
+        return jsonify({"error": str(e)}), 500
 
-@app.route("/embed")
-def embed_route():
-    """Serve the embed page with debugging"""
-    chatbot_origin = "https://emily-cheltenham.onrender.com"
+# ----------------- Main -----------------
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 5000))
+    debug = os.getenv("FLASK_ENV") == "development"
     
-    html = f"""<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <style>
-    html,body{{width:100%;height:100%;margin:0;padding:0;background:transparent;overflow:hidden}}
-    #penai-root{{width:100%;height:100%}}
-  </style>
-  <script>
-    window.PENAI_CHATBOT_ORIGIN = "{chatbot_origin}";
-    window.PENAI_VOICE_LANG = (navigator.language||'en').slice(0,2);
+    print(f"🚀 Emily Admin for Cheltenham College starting on port {port}")
+    print(f"🔗 OAuth callback URL: {REDIRECT_URI}")
     
-    console.log('Embed page loaded');
-    console.log('PENAI_CHATBOT_ORIGIN:', window.PENAI_CHATBOT_ORIGIN);
+    # Use provided certificates or create new ones
+    cert_file = "cert.pem"
+    key_file = "key.pem"
     
-    window.addEventListener('DOMContentLoaded', function() {{
-      console.log('DOM ready, penai-root exists:', !!document.getElementById('penai-root'));
-      
-      setTimeout(function() {{
-        console.log('After 1s - Elements created:');
-        console.log('- penai-toggle:', !!document.getElementById('penai-toggle'));
-        console.log('- penai-chatbox:', !!document.getElementById('penai-chatbox'));
-        console.log('- penai-styles:', !!document.getElementById('penai-styles'));
+    if not (Path(cert_file).exists() and Path(key_file).exists()):
+        cert_file, key_file = create_self_signed_cert()
+    
+    if cert_file and key_file:
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ssl_context.load_cert_chain(cert_file, key_file)
         
-        var toggle = document.getElementById('penai-toggle');
-        if (toggle) {{
-          var rect = toggle.getBoundingClientRect();
-          console.log('Toggle button position:', rect);
-          console.log('Toggle button computed style:', window.getComputedStyle(toggle).cssText);
-        }}
-      }}, 1000);
-    }});
-  </script>
-</head>
-<body>
-  <div id="penai-root"></div>
-  
-  <script 
-    src="{chatbot_origin}/static/script.js" 
-    onload="console.log('script.js loaded successfully')"
-    onerror="console.error('script.js failed to load')"
-    defer>
-  </script>
-</body>
-</html>"""
-    
-    resp = make_response(html)
-    resp.headers['X-Frame-Options'] = 'ALLOWALL'
-    resp.headers['Content-Type'] = 'text/html; charset=utf-8'
-    resp.headers['Access-Control-Allow-Origin'] = '*'
-    return resp
-
-
-@app.route('/conversation/<session_id>', methods=['GET'])
-def get_conversation_summary(session_id):
-    """Get conversation summary for dashboard"""
-    if session_id not in conversation_memory:
-        return jsonify({"ok": False, "error": "Session not found"}), 404
+        print(f"🔒 Running with HTTPS on https://localhost:{port}")
+        print("⚠️ Browser will warn about certificate - click 'Advanced' > 'Proceed'")
         
-    tracker = conversation_memory[session_id]
-    summary = tracker.get_conversation_summary()
-    
-    return jsonify({
-        "ok": True,
-        "summary": summary,
-        "should_handoff": tracker.should_offer_human_handoff()
-    })
-
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+        app.run(
+            host="localhost",
+            port=port,
+            debug=debug,
+            ssl_context=ssl_context
+        )
+    else:
+        print("⚠️ Running HTTP only - voice features may not work")
+        app.run(host="localhost", port=port, debug=debug)
