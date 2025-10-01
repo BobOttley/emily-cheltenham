@@ -69,6 +69,7 @@ SCOPES = [
     "User.Read",
     "Mail.Read",
     "Mail.ReadWrite",
+    "Mail.Send",
     "Calendars.ReadWrite",
     "MailboxSettings.Read"
 ]
