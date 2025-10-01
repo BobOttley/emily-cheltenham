@@ -346,15 +346,16 @@
       // ==================== EMAIL FUNCTIONS ====================
       
       if (functionName === 'create_mail_draft') {
-        // Create email draft
-        const response = await fetch('/api/emails/draft', {
+        // Send email immediately (NOT a draft)
+        const response = await fetch('/api/emails/send', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',  // Important for session cookies
+          credentials: 'include',
           body: JSON.stringify({
             to: args.to || [],
-            subject: args.subject || 'Draft Email',
-            body: args.body || args.html || '<p>Draft email content</p>'
+            cc: args.cc || [],
+            subject: args.subject || 'Email from Emily',
+            body: args.body || args.html || '<p>Email content</p>'
           })
         });
         
@@ -367,11 +368,10 @@
         result = {
           ok: true,
           success: true,
-          draftId: data.draftId,
-          message: `I've created a draft email in your Outlook Drafts folder. Please open Outlook (web or desktop) and go to your Drafts folder to review and send it.`
+          message: `Email sent successfully to ${Array.isArray(args.to) ? args.to.join(', ') : args.to}.`
         };
         
-        console.log('✅ Email draft created:', data.draftId);
+        console.log('✅ Email sent');
         
       } else if (functionName === 'get_inbox_summary') {
         // Get inbox summary
