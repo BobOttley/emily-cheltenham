@@ -885,8 +885,36 @@ def ask():
     language = data.get("language", "en")
     family_id = data.get("family_id")
     
-    # Skip empty or system messages (voice handles welcome automatically)
-    if not question or question == "__WELCOME__":
+    # Handle text-based welcome message request (for chatbot UI)
+    if question == "__WELCOME__":
+        if family_id:
+            family_context = fetch_family_context(family_id)
+            if family_context:
+                child_name = family_context.get('child_name', '').strip()  # "George Smith"
+                family_surname_full = family_context.get('family_surname', '').strip()  # "the Smith Family"
+                
+                if child_name and family_surname_full:
+                    welcome_msg = f"On behalf of Cheltenham College and the admissions team, I'd like to extend a warm welcome to {child_name} and {family_surname_full}. How may I assist you today?"
+                elif child_name:
+                    welcome_msg = f"On behalf of Cheltenham College and the admissions team, I'd like to extend a warm welcome to {child_name}. How may I assist you today?"
+                else:
+                    welcome_msg = "On behalf of Cheltenham College and the admissions team, I'd like to extend you a warm welcome. How may I assist you today?"
+                
+                return jsonify({
+                    "answer": welcome_msg,
+                    "queries": ["fees", "admissions", "open", "contact", "prospectus"],
+                    "query_map": {}
+                })
+        
+        # Default welcome if no family_id
+        return jsonify({
+            "answer": "Hi there! Ask me anything about Cheltenham College.",
+            "queries": ["fees", "admissions", "open", "contact", "prospectus"],
+            "query_map": {}
+        })
+    
+    # Skip empty questions
+    if not question:
         return jsonify({
             "answer": "Please ask a question.",
             "queries": ["fees", "admissions", "contact"],
@@ -907,40 +935,27 @@ Language: {language}"""
     
     # Add family personalization
     if family_context:
-        # Get individual name components
-        first_name = family_context.get('first_name', '').strip()
-        family_surname = family_context.get('family_surname', '').strip()
-        parent_name = family_context.get('parent_name', '').strip()
+        child_name = family_context.get('child_name', '')
+        parent_name = family_context.get('parent_name', '')
         age_group = family_context.get('age_group', '')
         entry_year = family_context.get('entry_year', '')
         
-        # Build greeting using first_name and family_surname separately
-        if first_name and family_surname:
-            greeting = f"On behalf of Cheltenham College and the admissions team, I would like to extend a warm welcome to {first_name} {family_surname} and the {family_surname} family. How may I assist you today?"
-        elif first_name:
-            greeting = f"On behalf of Cheltenham College and the admissions team, I would like to extend a warm welcome to {first_name}. How may I assist you today?"
-        else:
-            greeting = "On behalf of Cheltenham College and the admissions team, I would like to extend you a warm welcome. How may I assist you today?"
-        
-        instructions += f"""
+        system_msg += f"""
 
 IMPORTANT CONTEXT:
-You are speaking with {parent_name} about their child {first_name} {family_surname}.
+You are speaking with {parent_name} about their child {child_name}.
 - Age group: {age_group}
 - Prospective entry: {entry_year}
 
-FIRST MESSAGE: When the conversation begins, say exactly: '{greeting}'
-
-After this greeting, respond naturally to questions about Cheltenham College.
+Reference their child naturally when relevant.
 """
     
     # Search knowledge base (if available)
     context_snippets = []
     if len(DOC_EMBEDDINGS) > 0 and len(METADATA) > 0:
         try:
-            # Simple keyword search
             query_lower = question.lower()
-            for meta in METADATA[:20]:  # Check first 20 docs
+            for meta in METADATA[:20]:
                 text = meta.get("text", "").lower()
                 if any(word in text for word in query_lower.split()):
                     context_snippets.append(meta.get("text", "")[:300])
@@ -966,7 +981,6 @@ After this greeting, respond naturally to questions about Cheltenham College.
         
         answer = response.choices[0].message.content
         
-        # Return response with suggested follow-up queries
         return jsonify({
             "answer": answer,
             "queries": ["fees", "admissions", "open", "contact", "prospectus"],
