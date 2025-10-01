@@ -1015,7 +1015,10 @@ Make EVERY response this personal and specific to {child_name}.
     
     if context_snippets:
         system_msg += f"\n\nRELEVANT INFORMATION:\n" + "\n".join(context_snippets[:2])
-    
+    print(f"🔍 FULL SYSTEM PROMPT:")
+    print(system_msg)
+    print(f"🔍 FAMILY CONTEXT DATA:")
+    print(json.dumps(family_context, indent=2))
     # Call OpenAI
     try:
         print(f"🔍 SENDING TO OPENAI - First 1000 chars of prompt:")
