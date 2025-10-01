@@ -12,7 +12,6 @@ import difflib
 from datetime import datetime, date
 from typing import Optional, Dict, Any, List
 
-
 import requests
 from bs4 import BeautifulSoup
 from dateutil import parser as dateparse
@@ -932,8 +931,20 @@ def create_realtime_session():
             "Always personalize your responses with their specific information. "
         )
 
+    # Build personalized greeting if we have family context
+    family_greeting = ""
+    if family_id:
+        family_ctx = fetch_family_context(family_id)
+        if family_ctx and family_ctx.get('parent_name'):
+            # Extract surname from parent name (e.g., "Mr John Smith" -> "Smith")
+            parent_name = family_ctx.get('parent_name', '')
+            surname = parent_name.split()[-1] if parent_name else ''
+            if surname:
+                family_greeting = f"When you first greet the user, say something like: 'Hello! Is this the {surname} family?' This shows you know who they are. "
+    
     instructions = (
         f"{family_instruction}"
+        f"{family_greeting}"
         f"{events_str}"
         f"PRIMARY LANGUAGE: {language}. Always speak and respond in this language (unless the user explicitly switches). "
         "Understand and recognise user speech in this language from the first turn. "
