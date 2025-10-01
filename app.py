@@ -281,27 +281,35 @@ def fetch_family_context(family_id: str) -> Optional[Dict[str, Any]]:
                 data = dict(zip(cols, row))
                 
                 first_name = (data.get('first_name') or '').strip()
-                family_surname_full = (data.get('family_surname') or '').strip()  # "the Smith Family"
-                
-                # Extract just surname for child's name: "the Smith Family" -> "Smith"
+                family_surname_full = (data.get('family_surname') or '').strip()
                 surname_only = family_surname_full.replace('the ', '').replace('The ', '').replace(' Family', '').replace(' family', '').strip()
-                
-                # Build child name with JUST the surname
                 child_name = f"{first_name} {surname_only}".strip() if first_name and surname_only else first_name or surname_only or None
+                
+                # CRITICAL: Extract ALL inquiry form data from form_data JSONB
+                form_data = data.get("form_data", {}) or {}
                 
                 return {
                     "family_id": data.get("family_id"),
-                    "child_name": child_name,  # "George Smith"
-                    "first_name": first_name,  # "George"
-                    "family_surname": family_surname_full,  # "the Smith Family" (keep original for greeting)
-                    "surname_only": surname_only,  # "Smith" (extracted)
+                    "child_name": child_name,
+                    "first_name": first_name,
+                    "family_surname": family_surname_full,
+                    "surname_only": surname_only,
                     "age_group": data.get("age_group"),
                     "entry_year": data.get("entry_year"),
                     "parent_name": data.get("parent_name"),
                     "parent_email": data.get("parent_email"),
                     "country": data.get("country"),
                     "language": data.get("language", "en"),
-                    "form_data": data.get("form_data", {})
+                    # Extract inquiry form fields from form_data JSONB
+                    "stage": form_data.get("stage", ""),
+                    "gender": form_data.get("gender", ""),
+                    "boarding_preference": form_data.get("boardingPreference", ""),
+                    "academic_interests": form_data.get("academicInterests", []),
+                    "activities": form_data.get("activities", []),
+                    "specific_sports": form_data.get("specificSports", []),  # THIS IS THE KEY!
+                    "university_aspirations": form_data.get("universityAspirations", ""),
+                    "priorities": form_data.get("priorities", {}),
+                    "additional_info": form_data.get("additionalInfo", "")
                 }
     except Exception as e:
         print(f"DB fetch error: {e}")
