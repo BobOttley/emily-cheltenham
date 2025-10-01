@@ -1146,33 +1146,45 @@ def get_family(family_id):
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
-    debug = os.getenv("FLASK_ENV") == "development"
     
-    print(f"🚀 Emily Admin starting on port {port}")
+    # Check if running on Render (production) or locally (development)
+    is_render = os.getenv("RENDER") == "true"
+    
+    print(f"🚀 Emily for Cheltenham College starting on port {port}")
     print(f"📍 OAuth callback URL: {REDIRECT_URI}")
     print(f"📋 Scopes: {SCOPE_STR}")
     
-    # Create SSL certificate for HTTPS (required for voice)
-    cert_file, key_file = create_self_signed_cert()
-    
-    if cert_file and key_file:
-        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ssl_context.load_cert_chain(cert_file, key_file)
-        
-        print(f"🔒 Running with HTTPS on https://localhost:{port}")
-        print("⚠️ Browser will warn about certificate - click 'Advanced' > 'Proceed to localhost'")
-        
+    if is_render:
+        # Production on Render - no SSL, bind to 0.0.0.0
+        print(f"🌐 Running on Render (production)")
         app.run(
-            host="localhost",
+            host="0.0.0.0",  # Required for Render
             port=port,
-            debug=debug,
-            ssl_context=ssl_context
+            debug=False
         )
     else:
-        print("⚠️ Failed to create SSL certificate. Voice features will not work.")
-        print(f"🔌 Running HTTP only on http://localhost:{port}")
-        app.run(
-            host="localhost",
-            port=port,
-            debug=debug
-        )
+        # Local development - use SSL for voice features
+        debug = os.getenv("FLASK_ENV") == "development"
+        cert_file, key_file = create_self_signed_cert()
+        
+        if cert_file and key_file:
+            ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ssl_context.load_cert_chain(cert_file, key_file)
+            
+            print(f"🔒 Running locally with HTTPS on https://localhost:{port}")
+            print("⚠️ Browser will warn about certificate - click 'Advanced' > 'Proceed to localhost'")
+            
+            app.run(
+                host="localhost",
+                port=port,
+                debug=debug,
+                ssl_context=ssl_context
+            )
+        else:
+            print("⚠️ Failed to create SSL certificate. Voice features will not work.")
+            print(f"🔌 Running HTTP only on http://localhost:{port}")
+            app.run(
+                host="localhost",
+                port=port,
+                debug=debug
+            )
