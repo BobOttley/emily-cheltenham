@@ -1091,18 +1091,19 @@ IMPORTANT: When asked to create or send emails:
 - Never claim to have "sent" an email - you can only create drafts"""
 
     if family_context:
-        child_name = family_context.get('child_name', '')
-        parent_name = family_context.get('parent_name', '')
+        child_name = family_context.get('child_name', '').strip()  # "George Smith"
+        family_surname_full = family_context.get('family_surname', '').strip()  # "the Smith Family"
+        parent_name = family_context.get('parent_name', '').strip()
         age_group = family_context.get('age_group', '')
         entry_year = family_context.get('entry_year', '')
         
-        family_surname = family_context.get('family_surname', '').strip()
-        
-        # Build proper greeting for voice
-        if family_surname:
-            greeting = f"On behalf of Cheltenham College and the admissions team, I would like to extend a warm welcome to {child_name} and the {family_surname} family. How may I assist you today?"
-        else:
+        # Use child_name (already clean) + family_surname_full (for personalization)
+        if child_name and family_surname_full:
+            greeting = f"On behalf of Cheltenham College and the admissions team, I would like to extend a warm welcome to {child_name} and {family_surname_full}. How may I assist you today?"
+        elif child_name:
             greeting = f"On behalf of Cheltenham College and the admissions team, I would like to extend a warm welcome to {child_name}. How may I assist you today?"
+        else:
+            greeting = "On behalf of Cheltenham College and the admissions team, I would like to extend you a warm welcome. How may I assist you today?"
         
         instructions += f"""
 
@@ -1111,10 +1112,9 @@ You are speaking with {parent_name} about their child {child_name}.
 - Age group: {age_group}
 - Prospective entry: {entry_year}
 
-FIRST MESSAGE: When the conversation begins, greet them exactly like this: '{greeting}'
+FIRST MESSAGE: When responding to the initial "Hello", say exactly: '{greeting}'
 
-After the first message, speak naturally and reference their child when relevant.
-Example: "I'd be delighted to help you learn more about Cheltenham College for {child_name}."
+After this greeting, respond naturally to their questions.
 """
 
     try:
