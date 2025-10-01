@@ -280,14 +280,16 @@ def fetch_family_context(family_id: str) -> Optional[Dict[str, Any]]:
                 cols = [d.name for d in cur.description]
                 data = dict(zip(cols, row))
                 
-                # Build child name from first_name and family_surname
-                child_name = f"{data.get('first_name', '')} {data.get('family_surname', '')}".strip()
+                # FIXED: Build child name properly - just first name and surname
+                first_name = (data.get('first_name') or '').strip()
+                family_surname = (data.get('family_surname') or '').strip()
+                child_name = f"{first_name} {family_surname}".strip() if first_name and family_surname else first_name or family_surname or None
                 
                 return {
                     "family_id": data.get("family_id"),
-                    "child_name": child_name or None,
-                    "first_name": data.get("first_name"),
-                    "family_surname": data.get("family_surname"),
+                    "child_name": child_name,
+                    "first_name": first_name,
+                    "family_surname": family_surname,
                     "age_group": data.get("age_group"),
                     "entry_year": data.get("entry_year"),
                     "parent_name": data.get("parent_name"),
@@ -878,27 +880,7 @@ def ask():
     language = data.get("language", "en")
     family_id = data.get("family_id")
     
-    # Handle welcome message request
-    if question == "__WELCOME__" and family_id:
-        family_context = fetch_family_context(family_id)
-        if family_context:
-            child_name = family_context.get('child_name', '').strip()
-            family_surname = family_context.get('family_surname', '').strip()
-            
-            # Build proper welcome message
-            if child_name and family_surname:
-                welcome_msg = f"On behalf of Cheltenham College and the admissions team, I'd like to extend a warm welcome to {child_name} and the {family_surname} family. How may I assist you today?"
-            elif child_name:
-                welcome_msg = f"On behalf of Cheltenham College and the admissions team, I'd like to extend a warm welcome to {child_name}. How may I assist you today?"
-            else:
-                welcome_msg = "On behalf of Cheltenham College and the admissions team, I'd like to extend you a warm welcome. How may I assist you today?"
-                
-            return jsonify({
-                "answer": welcome_msg,
-                "queries": ["fees", "admissions", "open", "contact", "prospectus"],
-                "query_map": {}
-            })
-    
+    # Skip empty or system messages (voice handles welcome automatically)
     if not question or question == "__WELCOME__":
         return jsonify({
             "answer": "Please ask a question.",
