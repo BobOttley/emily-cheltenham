@@ -288,10 +288,32 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function updateWelcome() {
-    const t = UI_TEXT[currentLanguage] || UI_TEXT.en;
+  const t = UI_TEXT[currentLanguage] || UI_TEXT.en;
+  
+  // If we have a family_id, fetch personalized welcome
+  if (FAMILY_ID) {
+    fetch("/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ 
+        question: "__WELCOME__",  // Special flag for welcome message
+        language: currentLanguage,
+        family_id: FAMILY_ID
+      })
+    })
+    .then(r => r.json())
+    .then(data => {
+      welcomeEl.innerText = data.answer || t.welcome;
+    })
+    .catch(() => {
+      welcomeEl.innerText = t.welcome;
+    });
+  } else {
     welcomeEl.innerText = t.welcome;
-    input.placeholder = t.placeholder;
   }
+  
+  input.placeholder = t.placeholder;
+}
 
   function renderDynamicButtons(queries = [], queryMap = {}) {
     clearButtons();
