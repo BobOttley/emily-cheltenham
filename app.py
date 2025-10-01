@@ -1,30 +1,49 @@
-# emily_cheltenham_enhanced.py
-# Enhanced Emily for Cheltenham College with Microsoft 365 Email Integration
-
+# emily_admin_app.py - Emily Admin (Microsoft 365 Helper) - FIXED VERSION
+# Combines working features from both apps
 
 import os
 import ssl
 import time
 import json
 import requests
+import re
 import pickle
+import uuid
+import numpy as np
 import subprocess
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 
-from flask import Flask, redirect, request, session, jsonify, render_template
+from flask import Flask, redirect, request, session, jsonify, render_template, make_response
 from flask_cors import CORS
 from dotenv import load_dotenv
 from openai import OpenAI
 from bs4 import BeautifulSoup
+import psycopg
+from psycopg_pool import ConnectionPool
 
 # Load environment variables
-load_dotenv()
+ENV_PATH = os.path.join(os.path.dirname(__file__), ".env")
+load_dotenv(dotenv_path=ENV_PATH)
 
 # Initialize OpenAI client
 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# Database connection for Cheltenham College inquiries
+DATABASE_URL = os.getenv("DATABASE_URL")
+db_pool = None
+
+if DATABASE_URL:
+    try:
+        db_pool = ConnectionPool(DATABASE_URL, min_size=1, max_size=10)
+        print("✅ Database connection pool created for Cheltenham inquiries")
+    except Exception as e:
+        print(f"⚠️ Database connection failed: {e}")
+        db_pool = None
+else:
+    print("⚠️ DATABASE_URL not set - family context features disabled")
 
 # Microsoft app settings
 CLIENT_ID = os.getenv("MS_CLIENT_ID")
@@ -33,21 +52,15 @@ REDIRECT_URI = os.getenv("MS_REDIRECT_URI", "https://localhost:5000/auth/callbac
 TENANT = os.getenv("MS_TENANT", "common")
 FLASK_SECRET = os.getenv("FLASK_SECRET", "dev-only-change-me-in-production")
 
-# Check if Microsoft integration is enabled
-MS_INTEGRATION_ENABLED = bool(CLIENT_ID and CLIENT_SECRET)
-
-if not MS_INTEGRATION_ENABLED:
-    print("⚠️ Microsoft integration disabled - MS_CLIENT_ID and MS_CLIENT_SECRET not set")
-    print("ℹ️  Some features will be unavailable until credentials are configured")
-else:
-    print("✅ Microsoft integration enabled")
+if not CLIENT_ID or not CLIENT_SECRET:
+    raise RuntimeError("Set MS_CLIENT_ID and MS_CLIENT_SECRET in .env")
 
 # Microsoft OAuth endpoints
 AUTH_URL = f"https://login.microsoftonline.com/{TENANT}/oauth2/v2.0/authorize"
 TOKEN_URL = f"https://login.microsoftonline.com/{TENANT}/oauth2/v2.0/token"
 GRAPH_URL = "https://graph.microsoft.com/v1.0"
 
-# Corrected scopes (no URL prefix for standard scopes)
+# FIXED: Correct scope string format (no https://graph.microsoft.com/ prefix for standard scopes)
 SCOPES = [
     "offline_access",
     "openid",
@@ -56,31 +69,27 @@ SCOPES = [
     "User.Read",
     "Mail.Read",
     "Mail.ReadWrite",
-    "Mail.Send",
     "Calendars.ReadWrite",
-    "MailboxSettings.Read",
-    "Contacts.ReadWrite"
+    "MailboxSettings.Read"
 ]
+# Build the proper scope string
 SCOPE_STR = " ".join(SCOPES)
 
 # Initialize Flask app
-app = Flask(__name__, static_folder='static', static_url_path='/static', template_folder='.')
+app = Flask(__name__, static_folder='static', static_url_path='/static')
 app.secret_key = FLASK_SECRET
 
-# Configure session for HTTPS
+# Configure session
 app.config['SESSION_COOKIE_SECURE'] = True
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'None'
-app.config['SESSION_COOKIE_NAME'] = 'emily_cheltenham_session'
+app.config['SESSION_COOKIE_NAME'] = 'emily_session'
 
 CORS(app, supports_credentials=True)
 
-# Load Cheltenham College knowledge base (if available)
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-EMBEDDINGS_PATH = os.path.join(BASE_DIR, "kb_chunks", "doc_embeddings.pkl")
-METADATA_PATH = os.path.join(BASE_DIR, "kb_chunks", "metadata.pkl")
-
-print(f"Looking for embeddings at: {EMBEDDINGS_PATH}")
+# Load school knowledge base embeddings (if available)
+EMBEDDINGS_PATH = os.path.join(os.path.dirname(__file__), "doc_embeddings.pkl")
+METADATA_PATH = os.path.join(os.path.dirname(__file__), "metadata.pkl")
 
 try:
     with open(EMBEDDINGS_PATH, 'rb') as f:
@@ -89,9 +98,8 @@ try:
         METADATA = pickle.load(f)
     print(f"✅ Loaded {len(DOC_EMBEDDINGS)} knowledge base embeddings")
 except Exception as e:
-    # Knowledge base is optional - app works fine without it
-    print(f"ℹ️  Knowledge base not loaded: {e}")
-    DOC_EMBEDDINGS = []
+    print(f"⚠️ Could not load embeddings: {e}")
+    DOC_EMBEDDINGS = np.array([])
     METADATA = []
 
 # ----------------- SSL Certificate Management -----------------
@@ -123,7 +131,7 @@ def create_self_signed_cert():
             '-out', str(cert_file),
             '-days', '365',
             '-nodes',
-            '-subj', '/C=GB/ST=England/L=Cheltenham/O=CheltenhamCollege/CN=localhost'
+            '-subj', '/C=GB/ST=England/L=London/O=EmilyAdmin/CN=localhost'
         ], capture_output=True, text=True)
         
         if result.returncode == 0:
@@ -139,9 +147,9 @@ def create_self_signed_cert():
         print(f"❌ Could not create certificate: {e}")
         return None, None
 
-# ----------------- Token Management -----------------
+# ----------------- Helper Functions -----------------
 
-def _now():
+def _now(): 
     return int(time.time())
 
 def _save_tokens(tok: dict):
@@ -153,7 +161,7 @@ def _need_refresh() -> bool:
     return not session.get("access_token") or (_now() >= int(session.get("expires_at", 0)) - 60)
 
 def _refresh_tokens_if_needed():
-    """Refresh tokens if needed"""
+    """Refresh tokens if needed with better error handling"""
     if not _need_refresh():
         return True
     
@@ -180,6 +188,7 @@ def _refresh_tokens_if_needed():
             return True
         else:
             print(f"Token refresh failed: {resp.status_code} - {resp.text}")
+            # Clear invalid tokens
             session.pop("access_token", None)
             session.pop("refresh_token", None)
             session.pop("expires_at", None)
@@ -197,16 +206,23 @@ def _auth_headers():
     return {"Authorization": f"Bearer {at}", "Content-Type": "application/json"}
 
 def _me(headers):
-    """Get user info"""
+    """Get user info with better error handling"""
     try:
         r = requests.get(f"{GRAPH_URL}/me", headers=headers, timeout=10)
+        
         if r.ok:
-            return r.json()
+            user_data = r.json()
+            print(f"Graph API /me response: {user_data}")
+            return user_data
         else:
             print(f"Graph API /me error: {r.status_code} - {r.text}")
             return {"error": r.text}
+            
+    except requests.exceptions.RequestException as e:
+        print(f"Request exception in _me: {e}")
+        return {"error": str(e)}
     except Exception as e:
-        print(f"Error in _me: {e}")
+        print(f"Unexpected error in _me: {e}")
         return {"error": str(e)}
 
 def get_user_info():
@@ -216,12 +232,11 @@ def get_user_info():
         return None
     return _me(headers)
 
-def _extract_plaintext_from_email(msg: dict) -> str:
+def _extract_plaintext_from_graph_msg(msg: dict) -> str:
     """Extract plain text from HTML email content"""
     body = (msg or {}).get("body", {})
     content = body.get("content") or ""
     content_type = (body.get("contentType") or "text").lower()
-    
     if content_type == "html":
         soup = BeautifulSoup(content, 'html.parser')
         for script in soup(["script", "style"]):
@@ -233,7 +248,60 @@ def _extract_plaintext_from_email(msg: dict) -> str:
         return text[:2000]
     return content.strip()[:2000]
 
-# ----------------- Authentication Routes -----------------
+def fetch_family_context(family_id: str) -> Optional[Dict[str, Any]]:
+    """Fetch family context from Cheltenham College inquiries database"""
+    if not db_pool:
+        return None
+    
+    sql = """
+    SELECT
+      id AS family_id,
+      COALESCE(child_first_name, child_name) AS child_first_name,
+      COALESCE(child_last_name, '') AS child_last_name,
+      COALESCE(year_group, entry_year, '') AS year_group,
+      COALESCE(boarding_status, '') AS boarding_status,
+      COALESCE(main_interests, '') AS main_interests,
+      COALESCE(parent_name, contact_name, '') AS parent_name,
+      COALESCE(parent_email, contact_email, '') AS parent_email,
+      COALESCE(country, '') AS country,
+      COALESCE(language_pref, 'en') AS language_pref
+    FROM public.inquiries
+    WHERE id = %s AND school = 'cheltenham'
+    LIMIT 1;
+    """
+    
+    try:
+        with db_pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (family_id,))
+                row = cur.fetchone()
+                if not row:
+                    return None
+                
+                cols = [d.name for d in cur.description]
+                data = dict(zip(cols, row))
+                
+                child_name = " ".join(filter(None, [
+                    data.get("child_first_name", "").strip(),
+                    data.get("child_last_name", "").strip()
+                ])).strip()
+                
+                return {
+                    "family_id": data.get("family_id"),
+                    "child_name": child_name or None,
+                    "year_group": data.get("year_group", "").strip(),
+                    "boarding_status": data.get("boarding_status", "").strip(),
+                    "interests": data.get("main_interests", "").strip(),
+                    "country": data.get("country", "").strip(),
+                    "language_pref": (data.get("language_pref") or "en")[:5],
+                    "parent_name": data.get("parent_name"),
+                    "parent_email": data.get("parent_email")
+                }
+    except Exception as e:
+        print(f"DB fetch error: {e}")
+        return None
+
+# ----------------- Routes -----------------
 
 @app.route("/")
 def home():
@@ -250,42 +318,67 @@ def home():
 
 @app.route("/api/status")
 def api_status():
-    """Check authentication status"""
+    """Check authentication status - FIXED version"""
     if "access_token" not in session:
         return jsonify({"authenticated": False})
     
+    # Refresh tokens if needed
     _refresh_tokens_if_needed()
     
+    # Check again after refresh
     if "access_token" not in session:
         return jsonify({"authenticated": False})
     
+    # Get headers
     h = _auth_headers()
     if not h:
         return jsonify({"authenticated": False})
     
+    # Get user info from Microsoft Graph
     try:
         r = requests.get(f"{GRAPH_URL}/me", headers=h, timeout=10)
         
         if r.ok:
             me = r.json()
+            print(f"Graph API /me response: {me}")  # Debug logging
+            
+            # Extract user details with multiple fallbacks
             display_name = (
                 me.get("displayName") or 
                 me.get("givenName") or 
+                me.get("preferredName") or
                 ""
             )
+            
+            # Try to get email from multiple fields
             email = (
                 me.get("mail") or 
                 me.get("userPrincipalName") or 
+                me.get("otherMails", [None])[0] if me.get("otherMails") else None or
                 ""
             )
             
+            user_id = me.get("id") or ""
+            
+            # If no display name but we have an email, create one from email
             if not display_name and email:
+                # john.doe@company.com -> John Doe
                 email_name = email.split('@')[0]
                 display_name = ' '.join(
                     word.capitalize() 
-                    for word in email_name.replace('.', ' ').replace('_', ' ').split()
+                    for word in email_name.replace('.', ' ').replace('_', ' ').replace('-', ' ').split()
                 )
             
+            # If we have givenName and surname, combine them
+            if not display_name and (me.get("givenName") or me.get("surname")):
+                parts = []
+                if me.get("givenName"):
+                    parts.append(me.get("givenName"))
+                if me.get("surname"):
+                    parts.append(me.get("surname"))
+                display_name = " ".join(parts)
+            
+            # Final fallback
             if not display_name:
                 display_name = "User"
             
@@ -294,42 +387,62 @@ def api_status():
                 "user": {
                     "name": display_name,
                     "email": email,
-                    "id": me.get("id", "")
+                    "id": user_id
                 }
             })
+            
         else:
+            print(f"Graph API error: {r.status_code} - {r.text}")
+            
+            # If we get a 401, token might be invalid
             if r.status_code == 401:
                 session.clear()
                 return jsonify({"authenticated": False})
             
+            # For other errors, return authenticated with fallback user
             return jsonify({
                 "authenticated": True,
-                "user": {"name": "User", "email": "", "id": ""}
+                "user": {
+                    "name": "User",
+                    "email": "",
+                    "id": ""
+                }
             })
             
     except Exception as e:
         print(f"Error getting user info: {e}")
+        # Don't log out on error - might be temporary
         return jsonify({
             "authenticated": True,
-            "user": {"name": "User", "email": "", "id": ""}
+            "user": {
+                "name": "User", 
+                "email": "",
+                "id": ""
+            }
         })
+
+@app.route("/debug/session")
+def debug_session():
+    """Debug endpoint to check session and token status"""
+    return jsonify({
+        "has_access_token": "access_token" in session,
+        "has_refresh_token": "refresh_token" in session,
+        "expires_at": session.get("expires_at"),
+        "current_time": _now(),
+        "needs_refresh": _need_refresh(),
+        "session_keys": list(session.keys()) if session else []
+    })
 
 @app.route("/login")
 def login():
     """Initiate OAuth flow"""
-    if not MS_INTEGRATION_ENABLED:
-        return jsonify({
-            "error": "Microsoft integration not configured",
-            "message": "Please set MS_CLIENT_ID and MS_CLIENT_SECRET environment variables"
-        }), 503
-    
     params = {
         "client_id": CLIENT_ID,
         "response_type": "code",
         "redirect_uri": REDIRECT_URI,
         "response_mode": "query",
         "scope": SCOPE_STR,
-        "prompt": "select_account"
+        "prompt": "select_account"  # Force account selection
     }
     q = "&".join([f"{k}={quote(v)}" for k, v in params.items()])
     auth_url = f"{AUTH_URL}?{q}"
@@ -343,7 +456,7 @@ def callback():
     error = request.args.get("error")
     
     if error:
-        print(f"OAuth error: {error}")
+        print(f"OAuth error: {error} - {request.args.get('error_description')}")
         return f"Authentication error: {error}", 400
     
     if not code:
@@ -373,11 +486,7 @@ def callback():
     except Exception as e:
         print(f"Token exchange error: {e}")
         return f"Token exchange failed: {e}", 500
-@app.route("/embed")
-def embed():
-    """Serve the chat avatar for embedding"""
-    family_id = request.args.get('family_id', '')
-    return render_template('index.html', family_id=family_id)
+
 @app.route("/logout", methods=["POST"])
 def logout():
     """Sign out user"""
@@ -388,7 +497,7 @@ def logout():
 
 @app.route("/api/emails/inbox", methods=["GET"])
 def get_inbox():
-    """Get inbox messages with summaries"""
+    """Get inbox messages"""
     h = _auth_headers()
     if not h:
         return jsonify({"error": "Not authenticated"}), 401
@@ -400,11 +509,13 @@ def get_inbox():
         r = requests.get(url, headers=h, timeout=10)
         
         if not r.ok:
+            print(f"Inbox fetch error: {r.status_code} - {r.text}")
             return jsonify({"error": "Failed to fetch emails"}), r.status_code
         
         messages = r.json().get("value", [])
-        summaries = []
         
+        # Process messages into summaries
+        summaries = []
         for msg in messages:
             from_address = "unknown"
             if msg.get("from"):
@@ -416,7 +527,8 @@ def get_inbox():
                 "from": from_address,
                 "received": msg.get("receivedDateTime", ""),
                 "isRead": msg.get("isRead", False),
-                "hasAttachments": msg.get("hasAttachments", False)
+                "hasAttachments": msg.get("hasAttachments", False),
+                "bullets": [msg.get("subject", "No subject")]  # Simplified for now
             })
         
         return jsonify({"summaries": summaries, "total": len(summaries)})
@@ -427,110 +539,139 @@ def get_inbox():
 
 @app.route("/api/emails/draft", methods=["POST"])
 def create_email_draft():
-    """Create a new email draft in Outlook or send immediately"""
+    """Create a new email draft in Outlook"""
     h = _auth_headers()
     if not h:
         return jsonify({"error": "Not authenticated"}), 401
     
     data = request.get_json() or {}
-    send_immediately = data.get("send", False)  # Check if user wants to send
     
-    message_data = {
-        "subject": data.get("subject", "Draft Email" if not send_immediately else "Email"),
+    # Build the draft message
+    draft = {
+        "subject": data.get("subject", "Draft Email"),
         "body": {
             "contentType": "HTML",
-            "content": data.get("body", "<p>Email content</p>")
+            "content": data.get("body", data.get("html", "<p>Draft email content</p>"))
         },
         "toRecipients": [
             {"emailAddress": {"address": email}} 
             for email in (data.get("to", []) if isinstance(data.get("to"), list) else [data.get("to")] if data.get("to") else [])
-        ]
+        ],
+        "isDraft": True
     }
     
-    # Add CC recipients if provided
-    if data.get("cc"):
-        message_data["ccRecipients"] = [
-            {"emailAddress": {"address": email}}
-            for email in (data.get("cc", []) if isinstance(data.get("cc"), list) else [data.get("cc")])
-        ]
+    # Create the draft
+    r = requests.post(f"{GRAPH_URL}/me/messages", headers=h, data=json.dumps(draft))
     
-    if send_immediately:
-        # Send email immediately
-        payload = {"message": message_data, "saveToSentItems": "true"}
-        r = requests.post(
-            f"{GRAPH_URL}/me/sendMail",
-            headers=h,
-            data=json.dumps(payload)
-        )
-        
-        if not r.ok:
-            print(f"Failed to send email: {r.status_code} - {r.text}")
-            return jsonify({"error": "Failed to send email"}), r.status_code
-        
-        # sendMail returns 202 with no body
-        return jsonify({
-            "success": True,
-            "sent": True,
-            "subject": message_data.get("subject"),
-            "message": "Email sent successfully"
-        })
-    else:
-        # Create draft
-        message_data["isDraft"] = True
-        r = requests.post(f"{GRAPH_URL}/me/messages", headers=h, data=json.dumps(message_data))
-        
-        if not r.ok:
-            print(f"Failed to create draft: {r.status_code} - {r.text}")
-            return jsonify({"error": "Failed to create draft"}), r.status_code
-        
-        created_draft = r.json()
-        
-        return jsonify({
-            "success": True,
-            "sent": False,
-            "draftId": created_draft.get("id"),
-            "subject": created_draft.get("subject"),
-            "message": "Draft created successfully in Outlook - check your Drafts folder"
-        })
+    if not r.ok:
+        print(f"Failed to create draft: {r.status_code} - {r.text}")
+        return jsonify({"error": "Failed to create draft"}), r.status_code
+    
+    created_draft = r.json()
+    
+    return jsonify({
+        "success": True,
+        "draftId": created_draft.get("id"),
+        "subject": created_draft.get("subject"),
+        "message": "Draft created successfully in Outlook"
+    })
 
-@app.route("/api/emails/<message_id>/reply-draft", methods=["POST"])
-def create_reply_draft(message_id):
-    """Create AI-powered draft reply"""
+@app.route("/api/emails/<message_id>/draft", methods=["POST"])
+def create_reply_draft_ai(message_id):
+    """Create AI-powered draft reply that preserves email thread"""
     h = _auth_headers()
     if not h:
         return jsonify({"error": "Not authenticated"}), 401
     
+    # Get current user info
     user_info = _me(h)
     user_email = user_info.get("mail") or user_info.get("userPrincipalName")
     user_name = user_info.get("displayName", "User")
     
-    # Get original message
-    r = requests.get(f"{GRAPH_URL}/me/messages/{message_id}", headers=h)
+    # Read original message with full details
+    r = requests.get(
+        f"{GRAPH_URL}/me/messages/{message_id}?$select=*",
+        headers=h
+    )
     if not r.ok:
         return jsonify({"error": "Could not load message"}), r.status_code
     
     original_msg = r.json()
-    sender = original_msg.get("from", {}).get("emailAddress", {})
-    subject = original_msg.get("subject", "")
-    original_text = _extract_plaintext_from_email(original_msg)
     
-    # Generate AI reply
-    system_msg = f"""You are Emily, an AI assistant for Cheltenham College helping {user_name} draft email replies.
-
-IMPORTANT:
-- Write the reply as if you are {user_name}, not as Emily
-- Use British spelling and professional tone
-- Format as HTML for Outlook (use <p>, <ul>, <strong> tags)
-- Sign as "{user_name}" and add "(Draft - Please Review)" after signature"""
+    # Extract all recipients for proper reply
+    sender = original_msg.get("from", {}).get("emailAddress", {})
+    to_recipients = original_msg.get("toRecipients", [])
+    cc_recipients = original_msg.get("ccRecipients", [])
+    
+    # Determine if user was the sender or recipient
+    user_is_sender = sender.get("address", "").lower() == user_email.lower()
+    
+    # Build reply recipients list
+    reply_to_list = []
+    reply_cc_list = []
+    
+    if user_is_sender:
+        # User sent the original - reply to original recipients
+        reply_to_list = [r["emailAddress"]["address"] for r in to_recipients]
+        reply_cc_list = [r["emailAddress"]["address"] for r in cc_recipients]
+    else:
+        # User received the email - reply to sender and CC others
+        reply_to_list = [sender.get("address")]
+        # Add other recipients to CC, excluding the user
+        for recipient in to_recipients:
+            email = recipient["emailAddress"]["address"]
+            if email.lower() != user_email.lower() and email not in reply_to_list:
+                reply_cc_list.append(email)
+        for recipient in cc_recipients:
+            email = recipient["emailAddress"]["address"]
+            if email.lower() != user_email.lower() and email not in reply_cc_list:
+                reply_cc_list.append(email)
+    
+    # Extract email content and subject
+    subject = original_msg.get("subject", "")
+    original_text = _extract_plaintext_from_graph_msg(original_msg)
+    
+    # Get conversation ID to maintain thread
+    conversation_id = original_msg.get("conversationId")
+    
+    # Prepare context for AI
+    email_context = {
+        "user_name": user_name,
+        "user_email": user_email,
+        "user_is_sender": user_is_sender,
+        "original_sender": sender.get("name", sender.get("address")),
+        "original_sender_email": sender.get("address"),
+        "reply_to": reply_to_list,
+        "cc_list": reply_cc_list,
+        "subject": subject,
+        "conversation_id": conversation_id
+    }
+    
+    # Generate AI reply with proper context
+    system_msg = f"""You are Emily, an AI assistant helping {user_name} draft email replies.
+    
+    IMPORTANT CONTEXT:
+    - The user ({user_name}, {user_email}) is asking you to draft a reply FROM THEM
+    - You are NOT the recipient of the email
+    - You are helping {user_name} write their reply
+    - Write the reply as if you are {user_name}, not as Emily
+    - Only sign as "{user_name}" or leave unsigned for them to sign
+    - Add "(Draft - Please Review)" after the signature
+    
+    Use British spelling, be professional and warm.
+    Format as HTML suitable for Outlook (use <p>, <ul>, <strong> tags)."""
     
     user_msg = f"""
-Original email from: {sender.get('name', sender.get('address'))}
+Original email was {'sent by' if user_is_sender else 'from'}: {email_context['original_sender']} ({email_context['original_sender_email']})
 Subject: {subject}
+This will reply to: {', '.join(reply_to_list)}
+CC: {', '.join(reply_cc_list) if reply_cc_list else 'None'}
 
 Original message:
 {original_text[:1500]}
 
-Please write a professional reply FROM {user_name}."""
+Please write a suitable reply FROM {user_name}. 
+Remember: You are helping {user_name} draft THEIR reply, not replying as Emily."""
 
     try:
         resp = openai_client.chat.completions.create(
@@ -546,15 +687,18 @@ Please write a professional reply FROM {user_name}."""
     except Exception as e:
         return jsonify({"error": f"OpenAI error: {e}"}), 500
     
-    # Create reply draft
-    r = requests.post(f"{GRAPH_URL}/me/messages/{message_id}/createReply", headers=h)
+    # Create reply draft in Outlook (preserves thread)
+    r = requests.post(
+        f"{GRAPH_URL}/me/messages/{message_id}/createReply",
+        headers=h
+    )
     if not r.ok:
         return jsonify({"error": "Failed to create reply"}), r.status_code
     
     draft = r.json()
     draft_id = draft.get("id")
     
-    # Update with AI content
+    # Update draft with AI content and proper recipients
     patch = {
         "body": {
             "contentType": "HTML",
@@ -562,7 +706,19 @@ Please write a professional reply FROM {user_name}."""
         }
     }
     
-    r2 = requests.patch(f"{GRAPH_URL}/me/messages/{draft_id}", headers=h, data=json.dumps(patch))
+    # Only update recipients if we need to add CCs
+    # (createReply already sets the To field correctly)
+    if reply_cc_list:
+        patch["ccRecipients"] = [
+            {"emailAddress": {"address": email}}
+            for email in reply_cc_list
+        ]
+    
+    r2 = requests.patch(
+        f"{GRAPH_URL}/me/messages/{draft_id}",
+        headers=h,
+        data=json.dumps(patch)
+    )
     
     if not r2.ok:
         return jsonify({"error": "Failed to update draft"}), r2.status_code
@@ -570,14 +726,17 @@ Please write a professional reply FROM {user_name}."""
     return jsonify({
         "success": True,
         "draftId": draft_id,
-        "message": "Reply draft created successfully"
+        "message": "Reply draft created successfully",
+        "threadPreserved": True,
+        "replyTo": reply_to_list,
+        "cc": reply_cc_list
     })
 
-# ----------------- Calendar Routes -----------------
+# ----------------- Calendar/Meeting Routes -----------------
 
-@app.route("/api/calendar/today", methods=["GET"])
-def calendar_today():
-    """Get today's calendar events"""
+@app.route("/api/calendar/daily-brief", methods=["GET"])
+def daily_brief():
+    """Get daily agenda"""
     h = _auth_headers()
     if not h:
         return jsonify({"error": "Not authenticated"}), 401
@@ -591,25 +750,78 @@ def calendar_today():
     r = requests.get(url, headers=h)
     
     if not r.ok:
-        return jsonify({"events": [], "count": 0, "summary": "Unable to load calendar"})
+        return jsonify({
+            "date": today.strftime("%A, %d %B %Y"),
+            "eventCount": 0,
+            "events": [],
+            "summary": "Unable to load calendar."
+        })
     
     events = r.json().get("value", [])
     
     return jsonify({
         "date": today.strftime("%A, %d %B %Y"),
-        "count": len(events),
+        "eventCount": len(events),
         "events": events,
-        "summary": f"You have {len(events)} meeting{'s' if len(events) != 1 else ''} today"
+        "summary": f"You have {len(events)} meetings today."
     })
 
-@app.route("/api/meetings/create", methods=["POST"])
-def create_meeting():
-    """Create Teams meeting"""
+@app.route("/api/meetings/find", methods=["POST"])
+def find_meeting_times():
+    """Find available meeting times"""
     h = _auth_headers()
     if not h:
         return jsonify({"error": "Not authenticated"}), 401
     
-    j = request.get_json() or {}
+    j = request.get_json(silent=True) or {}
+    attendees = j.get("attendees", [])
+    duration = int(j.get("durationMinutes", 30))
+    start = j.get("timeWindowStart")
+    end = j.get("timeWindowEnd")
+    
+    if not start or not end:
+        return jsonify({"error": "timeWindowStart and timeWindowEnd required"}), 400
+    
+    # Default to self if no attendees
+    if not attendees:
+        me = _me(h)
+        my_mail = me.get("mail") or me.get("userPrincipalName")
+        if my_mail:
+            attendees = [my_mail]
+    
+    # Try findMeetingTimes API
+    body = {
+        "attendees": [
+            {"type": "required", "emailAddress": {"address": a}} for a in attendees
+        ],
+        "timeConstraint": {
+            "timeslots": [{
+                "start": {"dateTime": start, "timeZone": "UTC"},
+                "end": {"dateTime": end, "timeZone": "UTC"}
+            }]
+        },
+        "meetingDuration": f"PT{duration}M",
+        "returnSuggestionReasons": True,
+        "minimumAttendeePercentage": 100
+    }
+    
+    r = requests.post(f"{GRAPH_URL}/me/findMeetingTimes", headers=h, data=json.dumps(body))
+    
+    if r.ok:
+        data = r.json()
+        suggestions = data.get("meetingTimeSuggestions", [])
+        return jsonify({"success": True, "suggestions": suggestions})
+    
+    return jsonify({"error": "Could not find meeting times"}), r.status_code
+
+@app.route("/api/meetings/create", methods=["POST"])
+def create_meeting():
+    """Create Teams meeting with invites"""
+    h = _auth_headers()
+    if not h:
+        return jsonify({"error": "Not authenticated"}), 401
+    
+    j = request.get_json(silent=True) or {}
     
     subject = j.get("subject", "Meeting")
     attendees = j.get("attendees", [])
@@ -617,6 +829,7 @@ def create_meeting():
     end = j.get("end")
     tz = j.get("timeZone", "Europe/London")
     body_html = j.get("bodyHtml", "<p>Meeting agenda</p>")
+    teams = j.get("teams", True)
     
     if not attendees or not start or not end:
         return jsonify({"error": "attendees, start, end required"}), 400
@@ -628,213 +841,63 @@ def create_meeting():
         "end": {"dateTime": end, "timeZone": tz},
         "attendees": [
             {"emailAddress": {"address": a}, "type": "required"} for a in attendees
-        ],
-        "isOnlineMeeting": True,
-        "onlineMeetingProvider": "teamsForBusiness"
+        ]
     }
     
-    r = requests.post(f"{GRAPH_URL}/me/events", headers=h, data=json.dumps(event))
+    if teams:
+        event["isOnlineMeeting"] = True
+        event["onlineMeetingProvider"] = "teamsForBusiness"
+    
+    # Send invitations
+    r = requests.post(
+        f"{GRAPH_URL}/me/events?sendInvitations=true",
+        headers=h,
+        data=json.dumps(event)
+    )
     
     if not r.ok:
         return jsonify({"error": r.text}), r.status_code
     
     created = r.json()
+    join_url = (created.get("onlineMeeting") or {}).get("joinUrl")
     
     return jsonify({
         "success": True,
         "eventId": created.get("id"),
-        "joinUrl": (created.get("onlineMeeting") or {}).get("joinUrl"),
+        "joinUrl": join_url,
         "subject": created.get("subject")
     })
 
-# ----------------- Contact Routes -----------------
-
-@app.route('/api/contacts/create', methods=['POST'])
-def create_contact():
-    """Create contact in Outlook"""
-    h = _auth_headers()
-    if not h:
-        return jsonify({'error': 'Not authenticated'}), 401
-    
-    data = request.get_json() or {}
-    
-    contact_data = {
-        "givenName": data.get('firstName', ''),
-        "surname": data.get('lastName', ''),
-        "emailAddresses": [],
-        "businessPhones": [],
-        "companyName": data.get('company', ''),
-        "jobTitle": data.get('jobTitle', '')
-    }
-    
-    if data.get('email'):
-        contact_data["emailAddresses"] = [{
-            "address": data.get('email'),
-            "name": f"{data.get('firstName', '')} {data.get('lastName', '')}".strip()
-        }]
-    
-    if data.get('phone'):
-        contact_data["businessPhones"] = [data.get('phone')]
-    
-    try:
-        response = requests.post(
-            f'{GRAPH_URL}/me/contacts',
-            headers=h,
-            data=json.dumps(contact_data)
-        )
-        
-        if response.ok:
-            created_contact = response.json()
-            return jsonify({
-                'success': True,
-                'contactId': created_contact.get('id'),
-                'displayName': created_contact.get('displayName')
-            })
-        else:
-            return jsonify({'error': 'Failed to create contact'}), response.status_code
-            
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-# ----------------- Knowledge Base Search -----------------
-
+# ----------------- Voice/Realtime Routes -----------------
 @app.route("/api/knowledge/search", methods=["POST"])
 def search_knowledge():
-    """Search Cheltenham College knowledge base"""
+    """Search the school knowledge base"""
     data = request.get_json() or {}
     query = data.get("query", "")
     
-    if not query or len(METADATA) == 0:
+    if not query or len(DOC_EMBEDDINGS) == 0:
         return jsonify({"results": [], "message": "No results found"})
     
+    # Simple keyword search in metadata
     results = []
     query_lower = query.lower()
     
-    for meta in METADATA:
+    for i, meta in enumerate(METADATA):
         text = meta.get("text", "").lower()
         if query_lower in text:
             results.append({
-                "text": meta.get("text", "")[:500],
+                "text": meta.get("text", "")[:500],  # First 500 chars
                 "relevance": text.count(query_lower)
             })
     
+    # Sort by relevance
     results.sort(key=lambda x: x["relevance"], reverse=True)
     
     return jsonify({
-        "results": results[:5],
+        "results": results[:5],  # Top 5 results
         "count": len(results)
     })
-
-# ----------------- Admissions Inquiry Routes -----------------
-
-@app.route("/api/admissions/inquiry", methods=["POST"])
-def send_admissions_inquiry():
-    """Send an inquiry to admissions from a prospective parent/student"""
-    h = _auth_headers()
-    if not h:
-        return jsonify({"error": "Not authenticated"}), 401
     
-    # Get inquiry details from request (provided by the visitor)
-    data = request.get_json() or {}
-    
-    inquirer_name = data.get("inquirer_name", "")
-    inquirer_email = data.get("inquirer_email", "")
-    inquiry_topic = data.get("inquiry_topic", "General Inquiry")
-    inquiry_details = data.get("inquiry_details", "")
-    phone_number = data.get("phone_number", "Not provided")
-    
-    if not inquirer_email or not inquirer_name:
-        return jsonify({
-            "success": False,
-            "error": "Inquirer name and email are required"
-        }), 400
-    
-    # Get the admissions email from environment or use default
-    admissions_email = os.getenv("ADMISSIONS_EMAIL", "admissions@cheltenham.org")
-    
-    # Create professional email to admissions team
-    email_body = f"""<html>
-<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-    <h2 style="color: #003087;">Cheltenham College Enquiry</h2>
-    
-    <p>Dear Admissions Team,</p>
-    
-    <p>I am writing to enquire about {inquiry_topic.lower()}.</p>
-    
-    <div style="background-color: #f9f9f9; padding: 15px; border-left: 4px solid #003087; margin: 20px 0;">
-        {inquiry_details}
-    </div>
-    
-    <p>My contact details are:</p>
-    <ul style="list-style: none; padding-left: 0;">
-        <li><strong>Name:</strong> {inquirer_name}</li>
-        <li><strong>Email:</strong> {inquirer_email}</li>
-        <li><strong>Phone:</strong> {phone_number}</li>
-    </ul>
-    
-    <p>I look forward to hearing from you.</p>
-    
-    <p>Kind regards,<br>{inquirer_name}</p>
-    
-    <hr style="border: none; border-top: 1px solid #ddd; margin: 30px 0;">
-    
-    <p style="font-size: 11px; color: #666;">
-        <em>This enquiry was facilitated by Emily, the Cheltenham College virtual assistant.</em>
-    </p>
-</body>
-</html>"""
-    
-    # Send email to admissions AND CC the inquirer
-    message_data = {
-        "subject": f"Enquiry: {inquiry_topic}",
-        "body": {
-            "contentType": "HTML",
-            "content": email_body
-        },
-        "toRecipients": [
-            {"emailAddress": {"address": admissions_email}}
-        ],
-        "ccRecipients": [
-            {"emailAddress": {"address": inquirer_email, "name": inquirer_name}}
-        ]
-    }
-    
-    payload = {"message": message_data, "saveToSentItems": "true"}
-    r = requests.post(
-        f"{GRAPH_URL}/me/sendMail",
-        headers=h,
-        data=json.dumps(payload)
-    )
-    
-    if not r.ok:
-        print(f"Failed to send admissions inquiry: {r.status_code} - {r.text}")
-        return jsonify({
-            "success": False,
-            "error": "Failed to send inquiry to admissions"
-        }), r.status_code
-    
-    return jsonify({
-        "success": True,
-        "message": f"I've sent your enquiry to {admissions_email} and copied you at {inquirer_email}. The admissions team will be in touch soon.",
-        "admissions_email": admissions_email,
-        "cc_email": inquirer_email,
-        "inquirer_name": inquirer_name
-    })
-
-@app.route("/api/admissions/check", methods=["POST"])
-def check_admissions_query():
-    """Check if query is admissions-related and return admissions email"""
-    # This is a simple endpoint that returns admissions contact info
-    admissions_email = os.getenv("ADMISSIONS_EMAIL", "admissions@cheltenham.org")
-    
-    return jsonify({
-        "is_admissions_query": True,
-        "admissions_email": admissions_email,
-        "message": "I can help connect you with our admissions team!"
-    })
-
-# ----------------- Voice Assistant (OpenAI Realtime) -----------------
-
 @app.route("/realtime/session", methods=["POST"])
 def create_realtime_session():
     """Create OpenAI Realtime API session for voice"""
@@ -842,37 +905,27 @@ def create_realtime_session():
     if not api_key:
         return jsonify({"error": "OPENAI_API_KEY not set"}), 500
 
-    body = request.get_json() or {}
+    body = request.get_json(silent=True) or {}
     
     user = get_user_info()
     user_name = user.get("displayName", "User") if user else "User"
     
     model = body.get("model", "gpt-4o-realtime-preview-2024-12-17")
     voice = body.get("voice", "shimmer")
+    language = body.get("language", "en")
 
     instructions = f"""You are Emily, the administrative assistant for Cheltenham College.
-You're helping {user_name} with administrative tasks.
-Be warm, professional, and helpful. Use British spelling and expressions.
-
-IMPORTANT - Email Handling:
-- You can CREATE DRAFTS or SEND emails based on what the user asks
-- Listen carefully to their words:
-  * "draft an email" / "create a draft" → create draft only (send=false)
-  * "send an email" / "email them" → send immediately (send=true)
-- When creating a DRAFT, tell user: "I've created a draft in your Outlook Drafts folder for you to review"
-- When SENDING, confirm: "I've sent that email to [recipient]"
-- If unsure whether they want to send or draft, ask: "Would you like me to send this or save it as a draft?"
-
-CRITICAL - Admissions & Enquiry Handling:
-- ONLY offer to email admissions if user explicitly says: "contact admissions", "email admissions", "put me in touch", or "I want to enquire"
-- DO NOT trigger on casual mentions of: "prospectus", "fees", "tours" - instead provide information or direct to website
-- If they want to enquire, say: "I can help you get in touch with our admissions team. May I have your email address so I can copy you on the message?"
-- ALWAYS ask for their name and email address - you need this to CC them
-- Collect: name, email, inquiry details, and optionally phone number
-- ALWAYS CC the inquirer on any email to admissions
-- For general questions, provide helpful information and say: "For personalised information, you can visit cheltenham.org/admissions or I can connect you with our team."
-
-Keep responses concise and conversational."""
+    You're helping {user_name} with admin tasks.
+    Be warm, professional, and helpful. Use British spelling and expressions.
+    
+    IMPORTANT: When asked to create or send emails:
+    - You can create DRAFT emails that the user must review and send manually
+    - Always say you're creating a "draft" not "sending" the email
+    - Tell the user to check their Outlook drafts folder
+    - Never claim to have "sent" an email - you can only create drafts
+    
+    Keep responses concise and conversational.
+    Language: {language}"""
 
     try:
         response = requests.post(
@@ -898,101 +951,104 @@ Keep responses concise and conversational."""
                     {
                         "type": "function",
                         "name": "create_mail_draft",
-                        "description": "Create a draft email in Outlook or send an email immediately. Use send=true to send, send=false to create draft.",
+                        "description": "Create a draft email in Outlook that the user can review and send",
                         "parameters": {
                             "type": "object",
                             "properties": {
                                 "to": {
                                     "type": "array",
                                     "items": {"type": "string"},
-                                    "description": "Recipient email addresses"
+                                    "description": "Email addresses of recipients"
                                 },
-                                "subject": {"type": "string", "description": "Email subject line"},
-                                "body": {"type": "string", "description": "HTML body of the email"},
-                                "send": {
-                                    "type": "boolean",
-                                    "description": "If true, send immediately. If false, save as draft. Listen to user's words: 'send' means true, 'draft' means false."
+                                "subject": {
+                                    "type": "string",
+                                    "description": "Email subject line"
+                                },
+                                "body": {
+                                    "type": "string",
+                                    "description": "HTML body of the email"
+                                },
+                                "message_id": {
+                                    "type": "string",
+                                    "description": "ID of message to reply to (for threaded replies)"
                                 }
                             },
-                            "required": ["subject", "body", "send"]
+                            "required": ["subject", "body"]
                         }
-                    },
-                    {
-                        "type": "function",
-                        "name": "search_knowledge",
-                        "description": "Search Cheltenham College knowledge base",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "query": {"type": "string"}
-                            },
-                            "required": ["query"]
-                        }
-                    },
-                    {
-                        "type": "function",
-                        "name": "get_inbox_summary",
-                        "description": "Get inbox summary",
-                        "parameters": {"type": "object", "properties": {}}
                     },
                     {
                         "type": "function",
                         "name": "create_contact",
-                        "description": "Create a contact",
+                        "description": "Create a new contact in Outlook address book",
                         "parameters": {
                             "type": "object",
                             "properties": {
                                 "firstName": {"type": "string"},
                                 "lastName": {"type": "string"},
-                                "email": {"type": "string"}
+                                "email": {"type": "string"},
+                                "phone": {"type": "string"},
+                                "company": {"type": "string"},
+                                "jobTitle": {"type": "string"}
                             },
                             "required": ["firstName", "email"]
                         }
                     },
                     {
                         "type": "function",
-                        "name": "offer_admissions_contact",
-                        "description": "ONLY use when user explicitly says they want to 'contact admissions', 'enquire', 'get in touch', or 'speak to someone'. Do NOT use for casual mentions of fees/tours/prospectus.",
+                        "name": "get_inbox_summary",
+                        "description": "Get a summary of recent emails in the inbox",
                         "parameters": {
                             "type": "object",
-                            "properties": {
-                                "inquiry_topic": {
-                                    "type": "string",
-                                    "description": "What they want to enquire about"
-                                }
-                            },
-                            "required": ["inquiry_topic"]
+                            "properties": {}
                         }
                     },
                     {
                         "type": "function",
-                        "name": "send_admissions_inquiry",
-                        "description": "Send enquiry to admissions. Ask the user for their email address so they can be CC'd on the message.",
+                        "name": "find_meeting_slots",
+                        "description": "Find available meeting slots",
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "inquirer_name": {
-                                    "type": "string",
-                                    "description": "The person's name"
+                                "attendees": {
+                                    "type": "array",
+                                    "items": {"type": "string"}
                                 },
-                                "inquirer_email": {
-                                    "type": "string",
-                                    "description": "The person's email address to CC them"
+                                "durationMinutes": {"type": "integer"}
+                            }
+                        }
+                    },
+                    {
+                        "type": "function",
+                        "name": "create_teams_meeting",
+                        "description": "Create a Teams meeting and send invites",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "subject": {"type": "string"},
+                                "attendees": {
+                                    "type": "array",
+                                    "items": {"type": "string"}
                                 },
-                                "inquiry_topic": {
+                                "start": {"type": "string"},
+                                "end": {"type": "string"},
+                                "bodyHtml": {"type": "string"}
+                            },
+                            "required": ["subject", "attendees", "start", "end"]
+                        }
+                    },
+                    {
+                        "type": "function",
+                        "name": "search_knowledge",
+                        "description": "Search the school knowledge base for information",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {
                                     "type": "string",
-                                    "description": "What they want to enquire about"
-                                },
-                                "inquiry_details": {
-                                    "type": "string",
-                                    "description": "Full details of their enquiry"
-                                },
-                                "phone_number": {
-                                    "type": "string",
-                                    "description": "Their phone number if provided (optional)"
+                                    "description": "Search query for the knowledge base"
                                 }
                             },
-                            "required": ["inquirer_name", "inquirer_email", "inquiry_topic", "inquiry_details"]
+                            "required": ["query"]
                         }
                     }
                 ]
@@ -1016,47 +1072,107 @@ Keep responses concise and conversational."""
         print(f"Realtime session error: {e}")
         return jsonify({"error": str(e)}), 500
 
+# ----------------- Contact Management Routes -----------------
+
+@app.route('/api/contacts/create', methods=['POST'])
+def create_contact():
+    """Create a new contact in Outlook"""
+    h = _auth_headers()
+    if not h:
+        return jsonify({'error': 'Not authenticated'}), 401
+    
+    data = request.get_json() or {}
+    
+    # Build contact data for Microsoft Graph
+    contact_data = {
+        "givenName": data.get('firstName', ''),
+        "surname": data.get('lastName', ''),
+        "emailAddresses": [],
+        "businessPhones": [],
+        "companyName": data.get('company', ''),
+        "jobTitle": data.get('jobTitle', '')
+    }
+    
+    # Add email if provided
+    if data.get('email'):
+        contact_data["emailAddresses"] = [{
+            "address": data.get('email'),
+            "name": f"{data.get('firstName', '')} {data.get('lastName', '')}".strip()
+        }]
+    
+    # Add phone if provided
+    if data.get('phone'):
+        contact_data["businessPhones"] = [data.get('phone')]
+    
+    # Create the contact
+    try:
+        response = requests.post(
+            f'{GRAPH_URL}/me/contacts',
+            headers=h,
+            data=json.dumps(contact_data)
+        )
+        
+        if response.ok:
+            created_contact = response.json()
+            return jsonify({
+                'success': True,
+                'contactId': created_contact.get('id'),
+                'displayName': created_contact.get('displayName'),
+                'message': f"Contact created for {created_contact.get('displayName', 'contact')}"
+            })
+        else:
+            print(f"Failed to create contact: {response.status_code} - {response.text}")
+            return jsonify({'error': 'Failed to create contact'}), response.status_code
+            
+    except Exception as e:
+        print(f"Error creating contact: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# ----------------- Family Context Route -----------------
+
+@app.route('/family/<family_id>', methods=['GET'])
+def get_family(family_id):
+    """Get family context from Cheltenham inquiries database"""
+    if not db_pool:
+        return jsonify({"ok": False, "error": "Database not configured"}), 503
+    
+    ctx = fetch_family_context(family_id)
+    if not ctx:
+        return jsonify({"ok": False, "error": "Family not found in Cheltenham database"}), 404
+    
+    return jsonify({"ok": True, "family": ctx})
+
 # ----------------- Main -----------------
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     debug = os.getenv("FLASK_ENV") == "development"
     
-    print(f"🚀 Emily Admin for Cheltenham College starting on port {port}")
-    print(f"🔗 OAuth callback URL: {REDIRECT_URI}")
+    print(f"🚀 Emily Admin starting on port {port}")
+    print(f"📍 OAuth callback URL: {REDIRECT_URI}")
+    print(f"📋 Scopes: {SCOPE_STR}")
     
-    # Check if running in production (Render) or development (local)
-    is_production = os.getenv("FLASK_ENV") == "production"
+    # Create SSL certificate for HTTPS (required for voice)
+    cert_file, key_file = create_self_signed_cert()
     
-    if is_production:
-        # Production on Render - no SSL, bind to 0.0.0.0
-        print(f"🌐 Running in PRODUCTION mode on 0.0.0.0:{port}")
+    if cert_file and key_file:
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ssl_context.load_cert_chain(cert_file, key_file)
+        
+        print(f"🔒 Running with HTTPS on https://localhost:{port}")
+        print("⚠️ Browser will warn about certificate - click 'Advanced' > 'Proceed to localhost'")
+        
         app.run(
-            host="0.0.0.0",  # Required for Render
+            host="localhost",
             port=port,
-            debug=False
+            debug=debug,
+            ssl_context=ssl_context
         )
     else:
-        # Development - use SSL and localhost
-        cert_file = "cert.pem"
-        key_file = "key.pem"
-        
-        if not (Path(cert_file).exists() and Path(key_file).exists()):
-            cert_file, key_file = create_self_signed_cert()
-        
-        if cert_file and key_file:
-            ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            ssl_context.load_cert_chain(cert_file, key_file)
-            
-            print(f"🔒 Running with HTTPS on https://localhost:{port}")
-            print("⚠️ Browser will warn about certificate - click 'Advanced' > 'Proceed'")
-            
-            app.run(
-                host="localhost",
-                port=port,
-                debug=debug,
-                ssl_context=ssl_context
-            )
-        else:
-            print("⚠️ Running HTTP only - voice features may not work")
-            app.run(host="localhost", port=port, debug=debug)
+        print("⚠️ Failed to create SSL certificate. Voice features will not work.")
+        print(f"🔌 Running HTTP only on http://localhost:{port}")
+        app.run(
+            host="localhost",
+            port=port,
+            debug=debug
+        )
