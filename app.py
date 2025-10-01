@@ -902,20 +902,31 @@ Language: {language}"""
     
     # Add family personalization
     if family_context:
-        child_name = family_context.get('child_name', '')
-        parent_name = family_context.get('parent_name', '')
+        # Get individual name components
+        first_name = family_context.get('first_name', '').strip()
+        family_surname = family_context.get('family_surname', '').strip()
+        parent_name = family_context.get('parent_name', '').strip()
         age_group = family_context.get('age_group', '')
         entry_year = family_context.get('entry_year', '')
         
-        system_msg += f"""
+        # Build greeting using first_name and family_surname separately
+        if first_name and family_surname:
+            greeting = f"On behalf of Cheltenham College and the admissions team, I would like to extend a warm welcome to {first_name} {family_surname} and the {family_surname} family. How may I assist you today?"
+        elif first_name:
+            greeting = f"On behalf of Cheltenham College and the admissions team, I would like to extend a warm welcome to {first_name}. How may I assist you today?"
+        else:
+            greeting = "On behalf of Cheltenham College and the admissions team, I would like to extend you a warm welcome. How may I assist you today?"
+        
+        instructions += f"""
 
 IMPORTANT CONTEXT:
-You are speaking with {parent_name} about their child {child_name}.
+You are speaking with {parent_name} about their child {first_name} {family_surname}.
 - Age group: {age_group}
 - Prospective entry: {entry_year}
 
-Welcome them warmly by name and reference their child when relevant.
-Example: "Hello {parent_name}! I'd be delighted to help you learn more about Cheltenham College for {child_name}."
+FIRST MESSAGE: When the conversation begins, say exactly: '{greeting}'
+
+After this greeting, respond naturally to questions about Cheltenham College.
 """
     
     # Search knowledge base (if available)
