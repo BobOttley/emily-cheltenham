@@ -48,7 +48,7 @@ else:
 # Microsoft app settings
 CLIENT_ID = os.getenv("MS_CLIENT_ID")
 CLIENT_SECRET = os.getenv("MS_CLIENT_SECRET")
-REDIRECT_URI = os.getenv("MS_REDIRECT_URI", "https://localhost:5000/auth/callback")
+REDIRECT_URI = os.getenv("MS_REDIRECT_URI", "https://emily-cheltenham.onrender.com/auth/callback")
 TENANT = os.getenv("MS_TENANT", "common")
 FLASK_SECRET = os.getenv("FLASK_SECRET", "dev-only-change-me-in-production")
 
@@ -256,15 +256,15 @@ def fetch_family_context(family_id: str) -> Optional[Dict[str, Any]]:
     sql = """
     SELECT
       id AS family_id,
-      COALESCE(child_first_name, child_name) AS child_first_name,
-      COALESCE(child_last_name, '') AS child_last_name,
-      COALESCE(year_group, entry_year, '') AS year_group,
-      COALESCE(boarding_status, '') AS boarding_status,
-      COALESCE(main_interests, '') AS main_interests,
-      COALESCE(parent_name, contact_name, '') AS parent_name,
-      COALESCE(parent_email, contact_email, '') AS parent_email,
-      COALESCE(country, '') AS country,
-      COALESCE(language_pref, 'en') AS language_pref
+      first_name,
+      family_surname,
+      parent_name,
+      parent_email,
+      age_group,
+      entry_year,
+      country,
+      language,
+      form_data
     FROM public.inquiries
     WHERE id = %s AND school = 'cheltenham'
     LIMIT 1;
@@ -281,21 +281,21 @@ def fetch_family_context(family_id: str) -> Optional[Dict[str, Any]]:
                 cols = [d.name for d in cur.description]
                 data = dict(zip(cols, row))
                 
-                child_name = " ".join(filter(None, [
-                    data.get("child_first_name", "").strip(),
-                    data.get("child_last_name", "").strip()
-                ])).strip()
+                # Build child name from first_name and family_surname
+                child_name = f"{data.get('first_name', '')} {data.get('family_surname', '')}".strip()
                 
                 return {
                     "family_id": data.get("family_id"),
                     "child_name": child_name or None,
-                    "year_group": data.get("year_group", "").strip(),
-                    "boarding_status": data.get("boarding_status", "").strip(),
-                    "interests": data.get("main_interests", "").strip(),
-                    "country": data.get("country", "").strip(),
-                    "language_pref": (data.get("language_pref") or "en")[:5],
+                    "first_name": data.get("first_name"),
+                    "family_surname": data.get("family_surname"),
+                    "age_group": data.get("age_group"),
+                    "entry_year": data.get("entry_year"),
                     "parent_name": data.get("parent_name"),
-                    "parent_email": data.get("parent_email")
+                    "parent_email": data.get("parent_email"),
+                    "country": data.get("country"),
+                    "language": data.get("language", "en"),
+                    "form_data": data.get("form_data", {})
                 }
     except Exception as e:
         print(f"DB fetch error: {e}")
