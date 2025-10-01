@@ -878,7 +878,20 @@ def ask():
     language = data.get("language", "en")
     family_id = data.get("family_id")
     
-    if not question:
+    # Handle welcome message request
+    if question == "__WELCOME__" and family_id:
+        family_context = fetch_family_context(family_id)
+        if family_context:
+            child_name = family_context.get('child_name', '')
+            family_surname = family_context.get('family_surname', '')
+            welcome_msg = f"On behalf of Cheltenham College and the admissions team, I'd like to extend a warm welcome to {child_name} and the {family_surname} family. How may I assist you today?"
+            return jsonify({
+                "answer": welcome_msg,
+                "queries": ["fees", "admissions", "open", "contact", "prospectus"],
+                "query_map": {}
+            })
+    
+    if not question or question == "__WELCOME__":
         return jsonify({
             "answer": "Please ask a question.",
             "queries": ["fees", "admissions", "contact"],
@@ -960,7 +973,7 @@ Example: "Hello {parent_name}! I'd be delighted to help you learn more about Che
         return jsonify({
             "answer": "I apologize, but I'm having trouble right now. Please try again in a moment.",
             "queries": ["fees", "admissions", "contact"]
-        })    
+        }) 
 
 @app.route("/realtime/tool/get_family_context", methods=["POST"])
 def get_family_context_tool():
