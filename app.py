@@ -64,7 +64,7 @@ SCOPES = [
 SCOPE_STR = " ".join(SCOPES)
 
 # Initialize Flask app
-app = Flask(__name__, static_folder='static', static_url_path='/static', template_folder='templates')
+app = Flask(__name__, static_folder='static', static_url_path='/static', template_folder='.')
 app.secret_key = FLASK_SECRET
 
 # Configure session for HTTPS
