@@ -10,6 +10,21 @@ console.log("✅ PEN.ai self-injecting script.js loaded");
 // === 0) Config: set your chatbot backend origin here (or window.PENAI_CHATBOT_ORIGIN) ===
 const CHATBOT_ORIGIN = window.PENAI_CHATBOT_ORIGIN || "http://localhost:5001";
 
+// === Extract family_id from URL or localStorage ===
+let FAMILY_ID = new URLSearchParams(window.location.search).get('family_id');
+if (!FAMILY_ID) {
+  try {
+    const stored = localStorage.getItem('enquiryData');
+    if (stored) {
+      const data = JSON.parse(stored);
+      FAMILY_ID = data.id;
+      console.log('✅ Family ID from localStorage:', FAMILY_ID);
+    }
+  } catch (e) {
+    console.error('Failed to parse enquiryData:', e);
+  }
+}
+
 // === 1) Fetch shim: route same-origin paths to chatbot backend when site + bot are separate ===
 (function () {
   const origFetch = window.fetch.bind(window);
@@ -310,7 +325,11 @@ document.addEventListener("DOMContentLoaded", () => {
     fetch("/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: cleanedQ, language: currentLanguage })
+      body: JSON.stringify({ 
+        question: cleanedQ, 
+        language: currentLanguage,
+        family_id: FAMILY_ID  // Now includes family_id from localStorage or URL
+      })
     })
     .then(r => r.json())
     .then(data => {
@@ -350,9 +369,9 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // Send initial resize message on load
-setTimeout(() => {
-  sendResizeMessage(64, 64); // Start with small bubble size
-}, 1000); // Increased delay to ensure iframe is loaded
+  setTimeout(() => {
+    sendResizeMessage(64, 64); // Start with small bubble size
+  }, 1000); // Increased delay to ensure iframe is loaded
 
   // Language + send
   languageSelector.addEventListener("change", () => { currentLanguage = languageSelector.value; updateWelcome(); showInitialButtons(); });
