@@ -60,6 +60,9 @@ AUTH_URL = f"https://login.microsoftonline.com/{TENANT}/oauth2/v2.0/authorize"
 TOKEN_URL = f"https://login.microsoftonline.com/{TENANT}/oauth2/v2.0/token"
 GRAPH_URL = "https://graph.microsoft.com/v1.0"
 
+# Cheltenham College admissions email
+ADMISSIONS_EMAIL = "bob.ottley@bsmart-ai.com"  # Change to actual email
+
 # FIXED: Correct scope string format (no https://graph.microsoft.com/ prefix for standard scopes)
 SCOPES = [
     "offline_access",
@@ -1270,10 +1273,16 @@ Keep responses concise and conversational.
 Language: {language}
 
 CRITICAL EMAIL INSTRUCTIONS:
-- You CAN and SHOULD send emails when asked
-- When you send an email, tell the user "I've sent the email to [recipient]"
-- Never say you're creating a "draft" - you are sending actual emails
-- Use the create_mail_draft function to send emails (yes, the name is misleading but it sends)
+- When sending emails about tours, admissions, or enquiries:
+  1. ALWAYS send TO: bob.ottley@bsmart-ai.com
+  2. ALWAYS ask the user: "What's your email address and best contact number so I can include them in the enquiry?"
+  3. Wait for their response before sending
+  4. Include their contact details in the email body
+  5. CC the user at their email address
+  6. After sending, confirm: "I've sent the enquiry to our admissions team and copied you at [their-email]"
+
+- Use the create_mail_draft function to send emails
+- Never say "draft" - you are SENDING emails immediately
 """
 
     # Add family context to instructions if available
@@ -1377,19 +1386,19 @@ Make EVERY response personal to {child_name}.
                     {
                         "type": "function",
                         "name": "create_mail_draft",
-                        "description": "Send an email immediately to specified recipients. The email is sent right away, not saved as a draft.",
+                        "description": "Send an email to Cheltenham College admissions team at admissions@cheltenham.ac.uk. The user's email and contact number should be included in the body and the user should be CC'd.",
                         "parameters": {
                             "type": "object",
                             "properties": {
                                 "to": {
                                     "type": "array",
                                     "items": {"type": "string"},
-                                    "description": "Email addresses of recipients"
+                                    "description": "Always use ['admissions@cheltenham.ac.uk']"
                                 },
                                 "cc": {
                                     "type": "array",
                                     "items": {"type": "string"},
-                                    "description": "CC email addresses (optional)"
+                                    "description": "User's email address to CC them"
                                 },
                                 "subject": {
                                     "type": "string",
@@ -1397,7 +1406,7 @@ Make EVERY response personal to {child_name}.
                                 },
                                 "body": {
                                     "type": "string",
-                                    "description": "Email body content (can be plain text or HTML)"
+                                    "description": "Email body - MUST include the user's contact number and email address"
                                 }
                             },
                             "required": ["to", "subject", "body"]
