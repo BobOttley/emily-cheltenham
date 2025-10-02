@@ -1067,17 +1067,82 @@ Make EVERY response this personal and specific to {child_name}.
         print(f"🔍 SENDING TO OPENAI - First 1000 chars of prompt:")
         print(system_msg[:1000])
         
+        # Define email tool
+        tools = [{
+            "type": "function",
+            "function": {
+                "name": "send_enquiry_email",
+                "description": "Send enquiry to Cheltenham admissions when user wants to book tour or contact admissions",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "user_name": {"type": "string"},
+                        "user_email": {"type": "string"},
+                        "user_phone": {"type": "string"},
+                        "message": {"type": "string"}
+                    },
+                    "required": ["user_name", "user_email", "user_phone", "message"]
+                }
+            }
+        }]
+
         response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": question}
             ],
+            tools=tools,
+            tool_choice="auto",
             temperature=0.7,
             max_tokens=300
         )
-        
-        answer = response.choices[0].message.content
+
+        message = response.choices[0].message
+
+        # Handle function call if Emily wants to send email
+        if message.tool_calls:
+            tool_call = message.tool_calls[0]
+            args = json.loads(tool_call.function.arguments)
+            
+            # Send email via Microsoft Graph
+            h = _auth_headers()
+            if h:
+                email_result = requests.post(
+                    f"{GRAPH_URL}/me/sendMail",
+                    headers=h,
+                    data=json.dumps({
+                        "message": {
+                            "subject": f"Enquiry from {args['user_name']}",
+                            "body": {
+                                "contentType": "HTML",
+                                "content": f"<p><strong>Name:</strong> {args['user_name']}<br><strong>Email:</strong> {args['user_email']}<br><strong>Phone:</strong> {args['user_phone']}</p><p>{args['message']}</p>"
+                            },
+                            "toRecipients": [{"emailAddress": {"address": ADMISSIONS_EMAIL}}],
+                            "ccRecipients": [{"emailAddress": {"address": args['user_email']}}]
+                        },
+                        "saveToSentItems": True
+                    })
+                )
+                result = "sent" if email_result.ok else "failed"
+            else:
+                result = "not authenticated"
+            
+            # Get Emily's response after sending
+            response = openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": question},
+                    message,
+                    {"role": "tool", "tool_call_id": tool_call.id, "content": f"Email {result}"}
+                ],
+                temperature=0.7,
+                max_tokens=300
+            )
+            answer = response.choices[0].message.content
+        else:
+            answer = message.content
         
         # Generate context-aware follow-up questions based on inquiry data
         suggested_queries = []
