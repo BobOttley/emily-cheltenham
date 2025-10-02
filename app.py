@@ -320,16 +320,12 @@ def fetch_family_context(family_id: str) -> Optional[Dict[str, Any]]:
 
 @app.route("/")
 def home():
-    """Main dashboard"""
-    if "access_token" not in session:
-        return redirect("/login")
-    
-    user = get_user_info()
-    if not user or "error" in user:
-        session.clear()
-        return redirect("/login")
-    
-    return render_template("index.html", user=user)
+    """API status endpoint"""
+    return jsonify({
+        "status": "online",
+        "service": "Emily Voice Assistant",
+        "version": "1.0"
+    })
 
 @app.route("/api/status")
 def api_status():
