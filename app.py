@@ -1244,7 +1244,7 @@ def search_knowledge():
     
 @app.route("/realtime/session", methods=["POST"])
 def create_realtime_session():
-    """Create OpenAI Realtime API session for voice WITH PERSONALIZED GREETING AND FULL CONTEXT"""
+    """Create OpenAI Realtime API session for voice WITH EMAIL SENDING"""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return jsonify({"error": "OPENAI_API_KEY not set"}), 500
@@ -1253,7 +1253,7 @@ def create_realtime_session():
     
     family_id = body.get("family_id")
     
-    # CRITICAL: Fetch family context BEFORE creating session
+    # Fetch family context if available
     family_context = None
     if family_id:
         family_context = fetch_family_context(family_id)
@@ -1273,13 +1273,14 @@ Be warm, helpful, and professional. Use British spelling and expressions.
 Keep responses concise and conversational.
 Language: {language}
 
-IMPORTANT: When asked to create or send emails:
-- You can create DRAFT emails that the user must review and send manually
-- Always say you're creating a "draft" not "sending" the email
-- Tell the user to check their Outlook drafts folder
-- Never claim to have "sent" an email - you can only create drafts"""
+CRITICAL EMAIL INSTRUCTIONS:
+- You CAN and SHOULD send emails when asked
+- When you send an email, tell the user "I've sent the email to [recipient]"
+- Never say you're creating a "draft" - you are sending actual emails
+- Use the create_mail_draft function to send emails (yes, the name is misleading but it sends)
+"""
 
-    # CRITICAL: Add ALL family context to system instructions
+    # Add family context to instructions if available
     if family_context:
         child_name = family_context.get('child_name', '').strip()
         family_surname_full = family_context.get('family_surname', '').strip()
@@ -1287,7 +1288,6 @@ IMPORTANT: When asked to create or send emails:
         age_group = family_context.get('age_group', '')
         entry_year = family_context.get('entry_year', '')
         
-        # Get ALL inquiry form details
         specific_sports = family_context.get('specific_sports', [])
         academic_interests = family_context.get('academic_interests', [])
         activities = family_context.get('activities', [])
@@ -1308,35 +1308,30 @@ IMPORTANT: When asked to create or send emails:
         
         instructions += f"""
 
-CRITICAL FAMILY CONTEXT - YOU MUST USE THIS IN EVERY RESPONSE:
+CRITICAL FAMILY CONTEXT - USE IN EVERY RESPONSE:
 Parent: {parent_name}
 Child: {child_name}
 Age group: {age_group}
 Entry year: {entry_year}
 Boarding preference: {boarding_preference}
 
-{child_name}'S SPECIFIC INTERESTS (REFERENCE THESE IN ALL ANSWERS):"""
+{child_name}'S SPECIFIC INTERESTS (REFERENCE IN ALL ANSWERS):"""
         
         if specific_sports:
             sports_list = ', '.join(specific_sports)
-            instructions += f"\nSPORTS (in order of preference): {sports_list}"
-            instructions += f"\n  → ALWAYS mention {specific_sports[0]} when discussing sports/facilities"
-            if len(specific_sports) > 1:
-                instructions += f"\n  → Also highlight {specific_sports[1]} opportunities"
+            instructions += f"\nSPORTS: {sports_list}"
+            instructions += f"\n  → Always mention {specific_sports[0]} when discussing sports"
         
         if academic_interests:
             academics_list = ', '.join(academic_interests)
             instructions += f"\nACADEMIC INTERESTS: {academics_list}"
-            instructions += f"\n  → Connect any academic answer to these subjects"
         
         if activities:
             activities_list = ', '.join(activities)
             instructions += f"\nEXTRA-CURRICULAR: {activities_list}"
-            instructions += f"\n  → Mention relevant clubs/societies"
         
         if university_aspirations:
             instructions += f"\nUNIVERSITY GOAL: {university_aspirations}"
-            instructions += f"\n  → Emphasize Oxbridge preparation and track record"
         
         if priorities:
             instructions += f"\n\nFAMILY PRIORITIES:"
@@ -1352,23 +1347,14 @@ Boarding preference: {boarding_preference}
         
         instructions += f"""
 
-MANDATORY BEHAVIOR - YOU MUST DO THIS:
-1. ALWAYS mention {child_name} by name in your responses
-2. ALWAYS connect your answer to their specific sports ({specific_sports[0] if specific_sports else 'interests'})
-3. ALWAYS reference their {university_aspirations if university_aspirations else 'university goals'}
-4. END every response with a personalized follow-up like:
-   "Given {child_name}'s interest in {specific_sports[0] if specific_sports else 'X'}, would you like to hear about..."
+MANDATORY BEHAVIOR:
+1. Always mention {child_name} by name
+2. Connect answers to their sports ({specific_sports[0] if specific_sports else 'interests'})
+3. Reference their {university_aspirations if university_aspirations else 'university goals'}
 
-FIRST MESSAGE: When responding to the initial "Hello", say exactly: '{greeting}'
+FIRST MESSAGE: When responding to "Hello", say: '{greeting}'
 
-EXAMPLE OF WHAT YOU MUST DO:
-Question: "What are your sports facilities?"
-BAD: "We have excellent sports facilities including rugby pitches and golf courses."
-GOOD: "Given {child_name}'s passion for {specific_sports[0] if specific_sports else 'Golf'}, you'll love our facilities - we have [specific details about {specific_sports[0] if specific_sports else 'that sport'}]. Since {child_name} also enjoys {specific_sports[1] if len(specific_sports) > 1 else 'Rugby'}, I should mention [details]. With ambitions for {university_aspirations or 'university'}, combining elite sport with academics is key here. Would you like to know how our {specific_sports[0] if specific_sports else 'sports'} programme supports university applications?"
-
-Make EVERY response this personal and specific to {child_name}.
-
-After this greeting, respond naturally to their questions using the context above.
+Make EVERY response personal to {child_name}.
 """
 
     try:
@@ -1395,7 +1381,7 @@ After this greeting, respond naturally to their questions using the context abov
                     {
                         "type": "function",
                         "name": "create_mail_draft",
-                        "description": "Create a draft email in Outlook that the user can review and send",
+                        "description": "Send an email immediately to specified recipients. The email is sent right away, not saved as a draft.",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -1404,37 +1390,21 @@ After this greeting, respond naturally to their questions using the context abov
                                     "items": {"type": "string"},
                                     "description": "Email addresses of recipients"
                                 },
+                                "cc": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "CC email addresses (optional)"
+                                },
                                 "subject": {
                                     "type": "string",
                                     "description": "Email subject line"
                                 },
                                 "body": {
                                     "type": "string",
-                                    "description": "HTML body of the email"
-                                },
-                                "message_id": {
-                                    "type": "string",
-                                    "description": "ID of message to reply to (for threaded replies)"
+                                    "description": "Email body content (can be plain text or HTML)"
                                 }
                             },
-                            "required": ["subject", "body"]
-                        }
-                    },
-                    {
-                        "type": "function",
-                        "name": "create_contact",
-                        "description": "Create a new contact in Outlook address book",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "firstName": {"type": "string"},
-                                "lastName": {"type": "string"},
-                                "email": {"type": "string"},
-                                "phone": {"type": "string"},
-                                "company": {"type": "string"},
-                                "jobTitle": {"type": "string"}
-                            },
-                            "required": ["firstName", "email"]
+                            "required": ["to", "subject", "body"]
                         }
                     },
                     {
@@ -1482,17 +1452,63 @@ After this greeting, respond naturally to their questions using the context abov
                     },
                     {
                         "type": "function",
-                        "name": "search_knowledge",
+                        "name": "create_contact",
+                        "description": "Create a new contact in Outlook address book",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "firstName": {"type": "string"},
+                                "lastName": {"type": "string"},
+                                "email": {"type": "string"},
+                                "phone": {"type": "string"},
+                                "company": {"type": "string"},
+                                "jobTitle": {"type": "string"}
+                            },
+                            "required": ["firstName", "email"]
+                        }
+                    },
+                    {
+                        "type": "function",
+                        "name": "get_family_context",
+                        "description": "Get information about a prospective family",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "family_id": {"type": "string"}
+                            }
+                        }
+                    },
+                    {
+                        "type": "function",
+                        "name": "get_open_days",
+                        "description": "Get upcoming open days and events",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {}
+                        }
+                    },
+                    {
+                        "type": "function",
+                        "name": "kb_search",
                         "description": "Search the school knowledge base for information",
                         "parameters": {
                             "type": "object",
                             "properties": {
                                 "query": {
                                     "type": "string",
-                                    "description": "Search query for the knowledge base"
+                                    "description": "Search query"
                                 }
                             },
                             "required": ["query"]
+                        }
+                    },
+                    {
+                        "type": "function",
+                        "name": "book_tour",
+                        "description": "Request to book a school tour",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {}
                         }
                     }
                 ]
