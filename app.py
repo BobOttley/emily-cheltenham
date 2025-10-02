@@ -1456,14 +1456,14 @@ Make EVERY response personal to {child_name}.
                     {
                         "type": "function",
                         "name": "create_mail_draft",
-                        "description": "Send an email to Cheltenham College admissions team at admissions@cheltenham.ac.uk. The user's email and contact number should be included in the body and the user should be CC'd.",
+                        "description": "Send an email to Cheltenham College admissions team at bob.ottley@bsmart-ai.com. The user's email and contact number should be included in the body and the user should be CC'd.",
                         "parameters": {
                             "type": "object",
                             "properties": {
                                 "to": {
                                     "type": "array",
                                     "items": {"type": "string"},
-                                    "description": "Always use ['admissions@cheltenham.ac.uk']"
+                                    "description": "Always use ['bob.ottley@bsmart-ai.com']"
                                 },
                                 "cc": {
                                     "type": "array",
