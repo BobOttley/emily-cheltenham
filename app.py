@@ -37,7 +37,12 @@ db_pool = None
 
 if DATABASE_URL:
     try:
-        db_pool = ConnectionPool(DATABASE_URL, min_size=1, max_size=10)
+        db_pool = ConnectionPool(
+            DATABASE_URL, 
+            min_size=2, 
+            max_size=20,
+            timeout=60.0
+        )
         print("✅ Database connection pool created for Cheltenham inquiries")
     except Exception as e:
         print(f"⚠️ Database connection failed: {e}")
