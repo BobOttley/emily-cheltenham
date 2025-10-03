@@ -1247,7 +1247,29 @@ Make EVERY response this personal and specific to {child_name}.
             "answer": "I apologise, but I'm having trouble right now. Please try again in a moment.",
             "queries": ["fees", "admissions", "contact"]
         })
-
+@app.route("/api/family/init", methods=["POST"])
+def init_family():
+    """Initialize family context for the session"""
+    data = request.get_json() or {}
+    family_id = data.get("family_id")
+    
+    if not family_id:
+        return jsonify({"error": "family_id required"}), 400
+    
+    # Store in session
+    session["family_id"] = family_id
+    
+    # Fetch and return family context
+    family_context = fetch_family_context(family_id)
+    
+    if not family_context:
+        return jsonify({"error": "Family not found"}), 404
+    
+    return jsonify({
+        "success": True,
+        "family": family_context
+    })
+    
 @app.route("/realtime/tool/get_family_context", methods=["POST"])
 def get_family_context_tool():
     """Tool endpoint for voice assistant to get family context"""
@@ -1338,10 +1360,16 @@ def create_realtime_session():
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return jsonify({"error": "OPENAI_API_KEY not set"}), 500
-
     body = request.get_json(silent=True) or {}
     
     family_id = body.get("family_id")
+    if not family_id and "family_id" in session:
+        family_id = session["family_id"]
+        print(f"📋 Using family_id from session: {family_id}")
+    
+    if family_id:
+        session["family_id"] = family_id
+        session.modified = True
     
     # Fetch family context if available
     family_context = None
