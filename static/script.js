@@ -11,20 +11,53 @@ console.log("✅ PEN.ai self-injecting script.js loaded");
 const CHATBOT_ORIGIN = window.PENAI_CHATBOT_ORIGIN || "http://localhost:5001";
 
 // === Extract family_id from URL or localStorage ===
+// === Extract family_id from URL or localStorage (PERSISTENT) ===
 let FAMILY_ID = new URLSearchParams(window.location.search).get('family_id');
 
-// If not in URL, try localStorage (only works if Emily is on same domain)
+// If found in URL, save to localStorage for persistence
+if (FAMILY_ID) {
+  try {
+    localStorage.setItem('emily_family_id', FAMILY_ID);
+    console.log('✅ Family ID saved to localStorage:', FAMILY_ID);
+  } catch (e) {
+    console.error('Failed to save family_id:', e);
+  }
+}
+
+// If not in URL, try localStorage (persistent across sessions)
 if (!FAMILY_ID) {
   try {
-    const stored = localStorage.getItem('enquiryData');
-    if (stored) {
-      const data = JSON.parse(stored);
-      FAMILY_ID = data.id;
+    FAMILY_ID = localStorage.getItem('emily_family_id');
+    if (FAMILY_ID) {
       console.log('✅ Family ID from localStorage:', FAMILY_ID);
+    } else {
+      // Fallback to old enquiryData format
+      const stored = localStorage.getItem('enquiryData');
+      if (stored) {
+        const data = JSON.parse(stored);
+        FAMILY_ID = data.id;
+        // Migrate to new format
+        localStorage.setItem('emily_family_id', FAMILY_ID);
+        console.log('✅ Family ID migrated from enquiryData:', FAMILY_ID);
+      }
     }
   } catch (e) {
-    console.error('Failed to parse enquiryData:', e);
+    console.error('Failed to parse stored data:', e);
   }
+}
+
+if (FAMILY_ID) {
+  console.log('✅ Family ID loaded:', FAMILY_ID);
+  
+  // Initialize backend session with family_id
+  fetch('/api/family/init', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    credentials: 'include',
+    body: JSON.stringify({family_id: FAMILY_ID})
+  }).catch(e => console.log('Could not init family session:', e));
+} else {
+  console.log('⚠️ No family ID found');
 }
 
 if (FAMILY_ID) {
