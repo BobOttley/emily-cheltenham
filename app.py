@@ -911,11 +911,17 @@ def embed():
 
 @app.route("/ask", methods=["POST"])
 def ask():
-    """Main chatbot endpoint - handles text and voice questions WITH PERSONALIZED WELCOME"""
     data = request.get_json() or {}
     question = data.get("question", "").strip()
     language = data.get("language", "en")
     family_id = data.get("family_id")
+    
+    # NEW: Persist family_id in session
+    if family_id:
+        session["family_id"] = family_id
+    elif "family_id" in session:
+        # Use stored family_id if not provided in request
+        family_id = session["family_id"]
     
     # CRITICAL: Handle text-based personalized welcome message
     if question == "__WELCOME__":
