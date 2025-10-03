@@ -60,12 +60,6 @@ if (FAMILY_ID) {
   console.log('⚠️ No family ID found');
 }
 
-if (FAMILY_ID) {
-  console.log('✅ Family ID loaded:', FAMILY_ID);
-} else {
-  console.log('⚠️ No family ID found');
-}
-
 // === 1) Fetch shim: route same-origin paths to chatbot backend when site + bot are separate ===
 (function () {
   const origFetch = window.fetch.bind(window);
