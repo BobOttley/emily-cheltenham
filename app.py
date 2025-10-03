@@ -1267,23 +1267,38 @@ def get_family_context_tool():
 
 @app.route("/realtime/tool/get_open_days", methods=["POST"])
 def get_open_days_tool():
-    """Tool endpoint for open days information"""
-    return jsonify({
-        "ok": True,
-        "events": [
-            {
-                "date": "2025-03-15",
-                "type": "Open Morning",
-                "time": "9:00 AM"
-            },
-            {
-                "date": "2025-05-10",
-                "type": "Open Day",
-                "time": "10:00 AM"
-            }
-        ]
-    })
-
+    """Tool endpoint for open days - queries from prospectus database"""
+    try:
+        # Query the prospectus Node.js API for open days
+        response = requests.get(
+            'https://cheltenham-college-prospectus.onrender.com/api/open-days',
+            timeout=10
+        )
+        
+        if response.ok:
+            data = response.json()
+            if data.get('success'):
+                events = data.get('events', [])
+                return jsonify({
+                    "ok": True,
+                    "events": events,
+                    "message": f"Found {len(events)} upcoming open days"
+                })
+        
+        # Fallback if API fails
+        return jsonify({
+            "ok": True,
+            "events": [],
+            "message": "No upcoming open days currently listed"
+        })
+        
+    except Exception as e:
+        print(f"Error fetching open days: {e}")
+        return jsonify({
+            "ok": True,
+            "events": [],
+            "message": "Unable to fetch open days at the moment"
+        })
 @app.route("/api/knowledge/search", methods=["POST"])
 def search_knowledge():
     """Search the school knowledge base"""
