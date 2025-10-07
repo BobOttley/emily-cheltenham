@@ -3,6 +3,7 @@
    - Injects minimal HTML + styles if missing
    - Fetch shim to hit chatbot origin across services
    - Preserves existing behaviour and labels
+   - NEW: Emily greeting bubble on video end or scroll
 ───────────────────────────────────────────────────────────── */
 
 console.log("✅ PEN.ai self-injecting script.js loaded");
@@ -104,6 +105,13 @@ if (FAMILY_ID) {
   #thinking-text::after{content:"";display:inline-block;width:1em;text-align:left;animation:penai-dots 1.2s steps(3,end) infinite;}
   @keyframes penai-dots{0%{content:""}33%{content:"."}66%{content:".."}100%{content:"..."}}
   .voice-indicator.hidden{display:none!important;}
+  
+  #emily-greeting-bubble{position:fixed;bottom:90px;right:90px;max-width:280px;background:#fff;border:2px solid var(--accent-color);border-radius:12px;padding:16px 20px;box-shadow:0 6px 24px rgba(0,0,0,.2);z-index:99999;opacity:0;transform:translateY(10px);transition:opacity .4s ease,transform .4s ease;pointer-events:none;}
+  #emily-greeting-bubble.show{opacity:1;transform:translateY(0);pointer-events:auto;}
+  #emily-greeting-bubble::after{content:"";position:absolute;bottom:-10px;right:20px;width:0;height:0;border-left:10px solid transparent;border-right:10px solid transparent;border-top:10px solid var(--accent-color);}
+  #emily-greeting-bubble p{margin:0;color:var(--primary-color);font-size:14px;line-height:1.5;}
+  #emily-greeting-bubble .close-bubble{position:absolute;top:8px;right:8px;background:none;border:none;color:#999;font-size:18px;cursor:pointer;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:50%;transition:background .2s;}
+  #emily-greeting-bubble .close-bubble:hover{background:#f0f0f0;}
   `;
   const style = document.createElement("style");
   style.id = "penai-styles";
@@ -214,6 +222,176 @@ function ensureChatSkeleton() {
   }
   if (!document.getElementById("aiAudio")) {
     ensureEl("audio", { id: "aiAudio", autoplay: "", playsinline: "" });
+  }
+  
+  // NEW: Emily greeting bubble
+  if (!document.getElementById("emily-greeting-bubble")) {
+    const bubble = ensureEl("div", { id: "emily-greeting-bubble" });
+    ensureEl("button", { class: "close-bubble", "aria-label": "Close", html: "✕" }, bubble);
+    ensureEl("p", { id: "emily-greeting-text", text: "Loading..." }, bubble);
+  }
+}
+
+// === NEW: Emily Greeting System ===
+function initEmilyGreeting() {
+  const bubble = document.getElementById("emily-greeting-bubble");
+  const greetingText = document.getElementById("emily-greeting-text");
+  const closeBtn = bubble?.querySelector(".close-bubble");
+  const toggleBtn = document.getElementById("penai-toggle");
+  
+  if (!bubble || !greetingText || !closeBtn || !toggleBtn) return;
+  
+  let greetingShown = false;
+  let greetingTimeout = null;
+  
+  // Fetch personalized greeting from Emily
+  function fetchGreeting() {
+    if (!FAMILY_ID) {
+      greetingText.textContent = "Hello! I'm Emily, your voice-enabled admissions assistant. Click to start a conversation.";
+      return;
+    }
+    
+    fetch("/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ 
+        question: "__GREETING__",  // Special flag for greeting bubble
+        language: "en",
+        family_id: FAMILY_ID
+      })
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.answer) {
+        greetingText.textContent = data.answer;
+      } else {
+        greetingText.textContent = "Hello! I'm Emily, your voice-enabled admissions assistant. Click to start a conversation.";
+      }
+    })
+    .catch(() => {
+      greetingText.textContent = "Hello! I'm Emily, your voice-enabled admissions assistant. Click to start a conversation.";
+    });
+  }
+  
+  // Show greeting bubble
+  function showGreeting() {
+    if (greetingShown) return;
+    greetingShown = true;
+    
+    fetchGreeting();
+    
+    setTimeout(() => {
+      bubble.classList.add("show");
+      
+      // Auto-dismiss after 12 seconds
+      greetingTimeout = setTimeout(() => {
+        hideGreeting();
+      }, 12000);
+    }, 100);
+  }
+  
+  // Hide greeting bubble
+  function hideGreeting() {
+    bubble.classList.remove("show");
+    if (greetingTimeout) {
+      clearTimeout(greetingTimeout);
+      greetingTimeout = null;
+    }
+  }
+  
+  // Close button handler
+  closeBtn.addEventListener("click", hideGreeting);
+  
+  // Click bubble to open chat
+  bubble.addEventListener("click", (e) => {
+    if (e.target === closeBtn || e.target.closest(".close-bubble")) return;
+    hideGreeting();
+    toggleBtn.click();
+  });
+  
+  // Trigger logic: video end OR scroll
+  let triggered = false;
+  
+  function triggerGreeting() {
+    if (triggered) return;
+    triggered = true;
+    showGreeting();
+  }
+  
+  // Option 1: Video end detection (looks for common hero video selectors)
+  const videoSelectors = [
+    '#hero-video',
+    '.hero-video',
+    'video[autoplay]',
+    '.video-hero video',
+    'header video',
+    '[data-hero-video]'
+  ];
+  
+  let heroVideo = null;
+  for (const selector of videoSelectors) {
+    heroVideo = document.querySelector(selector);
+    if (heroVideo) {
+      console.log('✅ Found hero video:', selector);
+      break;
+    }
+  }
+  
+  if (heroVideo) {
+    heroVideo.addEventListener('ended', () => {
+      console.log('🎬 Hero video ended - showing Emily greeting');
+      triggerGreeting();
+    });
+  }
+  
+  // Option 2: Scroll detection (scroll past 500px or hero section)
+  let lastScrollY = window.scrollY;
+  const scrollThreshold = 500;
+  
+  function checkScroll() {
+    const currentScrollY = window.scrollY;
+    
+    // User scrolled past threshold
+    if (currentScrollY > scrollThreshold && lastScrollY <= scrollThreshold) {
+      console.log('📜 Scrolled past threshold - showing Emily greeting');
+      triggerGreeting();
+    }
+    
+    lastScrollY = currentScrollY;
+  }
+  
+  window.addEventListener('scroll', checkScroll, { passive: true });
+  
+  // Also check if hero section exists and user scrolls past it
+  const heroSelectors = [
+    'header',
+    '.hero',
+    '.hero-section',
+    '[data-hero]',
+    '#hero'
+  ];
+  
+  let heroSection = null;
+  for (const selector of heroSelectors) {
+    heroSection = document.querySelector(selector);
+    if (heroSection) {
+      console.log('✅ Found hero section:', selector);
+      break;
+    }
+  }
+  
+  if (heroSection) {
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        // Hero section is leaving viewport (scrolled past)
+        if (!entry.isIntersecting && entry.boundingClientRect.top < 0) {
+          console.log('📜 Scrolled past hero section - showing Emily greeting');
+          triggerGreeting();
+        }
+      });
+    }, { threshold: 0 });
+    
+    observer.observe(heroSection);
   }
 }
 
@@ -439,7 +617,8 @@ document.addEventListener("DOMContentLoaded", () => {
   updateWelcome();
   showInitialButtons();
 
-  
+  // === NEW: Initialize Emily greeting system ===
+  initEmilyGreeting();
 
   // === 5) (Optional) Load the voice helper file automatically from chatbot service if not present ===
   const hasVoice = !!document.querySelector('script[src*="realtime-voice-handsfree.js"]');
