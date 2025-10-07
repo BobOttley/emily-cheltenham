@@ -3,7 +3,7 @@
    - Injects minimal HTML + styles if missing
    - Fetch shim to hit chatbot origin across services
    - Preserves existing behaviour and labels
-   - NEW: Emily greeting bubble on video end or scroll
+   - FIXED: Emily greeting bubble with better positioning and triggers
 ───────────────────────────────────────────────────────────── */
 
 console.log("✅ PEN.ai self-injecting script.js loaded");
@@ -11,7 +11,6 @@ console.log("✅ PEN.ai self-injecting script.js loaded");
 // === 0) Config: set your chatbot backend origin here (or window.PENAI_CHATBOT_ORIGIN) ===
 const CHATBOT_ORIGIN = window.PENAI_CHATBOT_ORIGIN || "http://localhost:5001";
 
-// === Extract family_id from URL or localStorage ===
 // === Extract family_id from URL or localStorage (PERSISTENT) ===
 let FAMILY_ID = new URLSearchParams(window.location.search).get('family_id');
 
@@ -75,8 +74,8 @@ if (FAMILY_ID) {
   if (document.getElementById("penai-styles")) return;
   const css = `
   :root { --primary-color:#091825; --accent-color:#FF9F1C; --text-color:#fff; --chat-bg:#f9f9f9; --border-color:#e0e0e0; --button-bg:#f0f0f0; --button-fg:#444; }
-  #penai-toggle{position:fixed;bottom:20px;right:20px;width:60px;height:60px;border-radius:50%;background:var(--accent-color);color:#fff;font-size:28px;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.2);z-index:100000;}
-  #penai-toggle:hover{background:#e98f14;}
+  #penai-toggle{position:fixed;bottom:20px;right:20px;width:60px;height:60px;border-radius:50%;background:var(--accent-color);color:#fff;font-size:28px;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.2);z-index:100000;transition:transform .2s ease;}
+  #penai-toggle:hover{background:#e98f14;transform:scale(1.05);}
   #penai-chatbox{display:none;flex-direction:column;position:fixed;bottom:90px;right:20px;width:360px;max-height:600px;background:#fff;border:1px solid var(--border-color);border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.15);z-index:100000;overflow:hidden;}
   #penai-chatbox.open{display:flex;animation:penai-slideUp .25s ease-out;}
   @keyframes penai-slideUp{from{transform:translateY(16px);opacity:0}to{transform:translateY(0);opacity:1}}
@@ -106,12 +105,70 @@ if (FAMILY_ID) {
   @keyframes penai-dots{0%{content:""}33%{content:"."}66%{content:".."}100%{content:"..."}}
   .voice-indicator.hidden{display:none!important;}
   
-  #emily-greeting-bubble{position:fixed;bottom:90px;right:90px;max-width:280px;background:#fff;border:2px solid var(--accent-color);border-radius:12px;padding:16px 20px;box-shadow:0 6px 24px rgba(0,0,0,.2);z-index:99999;opacity:0;transform:translateY(10px);transition:opacity .4s ease,transform .4s ease;pointer-events:none;}
-  #emily-greeting-bubble.show{opacity:1;transform:translateY(0);pointer-events:auto;}
-  #emily-greeting-bubble::after{content:"";position:absolute;bottom:-10px;right:20px;width:0;height:0;border-left:10px solid transparent;border-right:10px solid transparent;border-top:10px solid var(--accent-color);}
-  #emily-greeting-bubble p{margin:0;color:var(--primary-color);font-size:14px;line-height:1.5;}
-  #emily-greeting-bubble .close-bubble{position:absolute;top:8px;right:8px;background:none;border:none;color:#999;font-size:18px;cursor:pointer;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:50%;transition:background .2s;}
-  #emily-greeting-bubble .close-bubble:hover{background:#f0f0f0;}
+  /* FIXED: Emily greeting bubble with better positioning and animation */
+  #emily-greeting-bubble{
+    position:fixed;
+    bottom:100px;
+    right:20px;
+    max-width:300px;
+    background:#fff;
+    border:2px solid var(--accent-color);
+    border-radius:16px;
+    padding:18px 22px 18px 18px;
+    box-shadow:0 8px 32px rgba(0,0,0,.25);
+    z-index:100001;
+    opacity:0;
+    transform:translateY(20px) scale(0.95);
+    transition:opacity .5s ease, transform .5s ease;
+    pointer-events:none;
+    display:none;
+  }
+  #emily-greeting-bubble.show{
+    opacity:1;
+    transform:translateY(0) scale(1);
+    pointer-events:auto;
+    display:block;
+  }
+  #emily-greeting-bubble::after{
+    content:"";
+    position:absolute;
+    bottom:-12px;
+    right:28px;
+    width:0;
+    height:0;
+    border-left:12px solid transparent;
+    border-right:12px solid transparent;
+    border-top:12px solid var(--accent-color);
+  }
+  #emily-greeting-bubble p{
+    margin:0;
+    color:var(--primary-color);
+    font-size:14px;
+    line-height:1.6;
+    padding-right:20px;
+  }
+  #emily-greeting-bubble .close-bubble{
+    position:absolute;
+    top:8px;
+    right:8px;
+    background:none;
+    border:none;
+    color:#999;
+    font-size:20px;
+    cursor:pointer;
+    width:24px;
+    height:24px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    border-radius:50%;
+    transition:background .2s, color .2s;
+    line-height:1;
+  }
+  #emily-greeting-bubble .close-bubble:hover{
+    background:#f0f0f0;
+    color:#333;
+  }
   `;
   const style = document.createElement("style");
   style.id = "penai-styles";
@@ -119,7 +176,7 @@ if (FAMILY_ID) {
   document.head.appendChild(style);
 })();
 
-// === NEW: Helper function to send resize messages to parent window ===
+// === Helper function to send resize messages to parent window ===
 function sendResizeMessage(width, height) {
   try {
     if (window.parent && window.parent !== window) {
@@ -191,7 +248,7 @@ function ensureChatSkeleton() {
     ensureEl("button", { id: "send-button", text: "Send" }, inputRow);
   }
 
-  // Voice consent modal + indicator + audio (so realtime-voice-handsfree.js won't crash)
+  // Voice consent modal + indicator + audio
   if (!document.getElementById("voiceConsent")) {
     const modal = ensureEl("div", { id: "voiceConsent", style: "position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:999999;" });
     const panel = ensureEl("div", { style: "background:#fff;padding:20px;border-radius:12px;max-width:460px;width:92%;box-shadow:0 8px 30px rgba(0,0,0,.2);" }, modal);
@@ -224,30 +281,46 @@ function ensureChatSkeleton() {
     ensureEl("audio", { id: "aiAudio", autoplay: "", playsinline: "" });
   }
   
-  // NEW: Emily greeting bubble
+  // Emily greeting bubble
   if (!document.getElementById("emily-greeting-bubble")) {
     const bubble = ensureEl("div", { id: "emily-greeting-bubble" });
     ensureEl("button", { class: "close-bubble", "aria-label": "Close", html: "✕" }, bubble);
-    ensureEl("p", { id: "emily-greeting-text", text: "Loading..." }, bubble);
+    ensureEl("p", { id: "emily-greeting-text", text: "👋 Hi! I'm Emily, your voice-enabled admissions assistant. Click here to start a conversation!" }, bubble);
   }
 }
 
-// === NEW: Emily Greeting System ===
+// === IMPROVED: Emily Greeting System ===
 function initEmilyGreeting() {
   const bubble = document.getElementById("emily-greeting-bubble");
   const greetingText = document.getElementById("emily-greeting-text");
   const closeBtn = bubble?.querySelector(".close-bubble");
   const toggleBtn = document.getElementById("penai-toggle");
   
-  if (!bubble || !greetingText || !closeBtn || !toggleBtn) return;
+  if (!bubble || !greetingText || !closeBtn || !toggleBtn) {
+    console.log('⚠️ Emily greeting elements not found');
+    return;
+  }
+  
+  console.log('✅ Emily greeting system initialized');
   
   let greetingShown = false;
   let greetingTimeout = null;
+  let greetingDismissed = false;
+  
+  // Check if user already dismissed greeting in this session
+  try {
+    if (sessionStorage.getItem('emily_greeting_dismissed') === 'true') {
+      greetingDismissed = true;
+      console.log('ℹ️ Greeting previously dismissed this session');
+    }
+  } catch (e) {
+    console.log('Could not check session storage');
+  }
   
   // Fetch personalized greeting from Emily
   function fetchGreeting() {
     if (!FAMILY_ID) {
-      greetingText.textContent = "Hello! I'm Emily, your voice-enabled admissions assistant. Click to start a conversation.";
+      greetingText.innerHTML = "👋 Hi! I'm <strong>Emily</strong>, your voice-enabled admissions assistant. Click here to start a conversation!";
       return;
     }
     
@@ -255,7 +328,7 @@ function initEmilyGreeting() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ 
-        question: "__GREETING__",  // Special flag for greeting bubble
+        question: "__GREETING__",
         language: "en",
         family_id: FAMILY_ID
       })
@@ -265,34 +338,47 @@ function initEmilyGreeting() {
       if (data.answer) {
         greetingText.textContent = data.answer;
       } else {
-        greetingText.textContent = "Hello! I'm Emily, your voice-enabled admissions assistant. Click to start a conversation.";
+        greetingText.innerHTML = "👋 Hi! I'm <strong>Emily</strong>, your voice-enabled admissions assistant. Click here to start a conversation!";
       }
     })
     .catch(() => {
-      greetingText.textContent = "Hello! I'm Emily, your voice-enabled admissions assistant. Click to start a conversation.";
+      greetingText.innerHTML = "👋 Hi! I'm <strong>Emily</strong>, your voice-enabled admissions assistant. Click here to start a conversation!";
     });
   }
   
   // Show greeting bubble
   function showGreeting() {
-    if (greetingShown) return;
+    if (greetingShown || greetingDismissed) return;
+    
+    console.log('🎈 Showing Emily greeting bubble');
     greetingShown = true;
     
     fetchGreeting();
     
+    // Small delay for smooth animation
     setTimeout(() => {
       bubble.classList.add("show");
       
-      // Auto-dismiss after 12 seconds
+      // Auto-dismiss after 15 seconds
       greetingTimeout = setTimeout(() => {
+        console.log('⏰ Auto-dismissing greeting bubble');
         hideGreeting();
-      }, 12000);
+      }, 15000);
     }, 100);
   }
   
   // Hide greeting bubble
   function hideGreeting() {
+    console.log('👋 Hiding Emily greeting bubble');
     bubble.classList.remove("show");
+    greetingDismissed = true;
+    
+    try {
+      sessionStorage.setItem('emily_greeting_dismissed', 'true');
+    } catch (e) {
+      console.log('Could not save to session storage');
+    }
+    
     if (greetingTimeout) {
       clearTimeout(greetingTimeout);
       greetingTimeout = null;
@@ -300,61 +386,86 @@ function initEmilyGreeting() {
   }
   
   // Close button handler
-  closeBtn.addEventListener("click", hideGreeting);
+  closeBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    hideGreeting();
+  });
   
   // Click bubble to open chat
   bubble.addEventListener("click", (e) => {
     if (e.target === closeBtn || e.target.closest(".close-bubble")) return;
+    console.log('💬 Bubble clicked - opening chat');
     hideGreeting();
     toggleBtn.click();
   });
   
-  // Trigger logic: video end OR scroll
+  // === Trigger logic: Multiple methods ===
   let triggered = false;
   
   function triggerGreeting() {
-    if (triggered) return;
+    if (triggered || greetingDismissed) return;
     triggered = true;
-    showGreeting();
+    console.log('✨ Greeting trigger activated');
+    
+    // Delay slightly to ensure smooth page load
+    setTimeout(() => {
+      showGreeting();
+    }, 500);
   }
   
-  // Option 1: Video end detection (looks for common hero video selectors)
+  // Method 1: Video end detection
   const videoSelectors = [
     '#hero-video',
     '.hero-video',
     'video[autoplay]',
     '.video-hero video',
     'header video',
-    '[data-hero-video]'
+    '[data-hero-video]',
+    'section video',
+    '.banner video'
   ];
   
-  let heroVideo = null;
-  for (const selector of videoSelectors) {
-    heroVideo = document.querySelector(selector);
-    if (heroVideo) {
-      console.log('✅ Found hero video:', selector);
-      break;
+  function findAndWatchVideo() {
+    let heroVideo = null;
+    for (const selector of videoSelectors) {
+      heroVideo = document.querySelector(selector);
+      if (heroVideo) {
+        console.log('🎥 Found hero video:', selector);
+        heroVideo.addEventListener('ended', () => {
+          console.log('🎬 Hero video ended - triggering greeting');
+          triggerGreeting();
+        });
+        return true;
+      }
     }
+    return false;
   }
   
-  if (heroVideo) {
-    heroVideo.addEventListener('ended', () => {
-      console.log('🎬 Hero video ended - showing Emily greeting');
-      triggerGreeting();
-    });
+  // Try to find video immediately
+  const videoFound = findAndWatchVideo();
+  
+  // If no video found, try again after a short delay (for dynamic content)
+  if (!videoFound) {
+    setTimeout(() => {
+      findAndWatchVideo();
+    }, 1000);
   }
   
-  // Option 2: Scroll detection (scroll past 500px or hero section)
+  // Method 2: Scroll detection (300px threshold)
   let lastScrollY = window.scrollY;
-  const scrollThreshold = 500;
+  const scrollThreshold = 300;
+  let scrollCheckActive = true;
   
   function checkScroll() {
+    if (!scrollCheckActive) return;
+    
     const currentScrollY = window.scrollY;
     
-    // User scrolled past threshold
+    // User scrolled past threshold (going down)
     if (currentScrollY > scrollThreshold && lastScrollY <= scrollThreshold) {
-      console.log('📜 Scrolled past threshold - showing Emily greeting');
+      console.log('📜 Scrolled past threshold - triggering greeting');
       triggerGreeting();
+      scrollCheckActive = false; // Stop checking after trigger
     }
     
     lastScrollY = currentScrollY;
@@ -362,42 +473,66 @@ function initEmilyGreeting() {
   
   window.addEventListener('scroll', checkScroll, { passive: true });
   
-  // Also check if hero section exists and user scrolls past it
+  // Method 3: Hero section observer
   const heroSelectors = [
     'header',
     '.hero',
     '.hero-section',
     '[data-hero]',
-    '#hero'
+    '#hero',
+    '.banner',
+    'section:first-of-type'
   ];
   
-  let heroSection = null;
-  for (const selector of heroSelectors) {
-    heroSection = document.querySelector(selector);
-    if (heroSection) {
-      console.log('✅ Found hero section:', selector);
-      break;
+  function findAndObserveHero() {
+    let heroSection = null;
+    for (const selector of heroSelectors) {
+      heroSection = document.querySelector(selector);
+      if (heroSection) {
+        console.log('🏛️ Found hero section:', selector);
+        
+        const observer = new IntersectionObserver((entries) => {
+          entries.forEach(entry => {
+            // Hero section is leaving viewport (scrolled past)
+            if (!entry.isIntersecting && entry.boundingClientRect.top < 0) {
+              console.log('📜 Scrolled past hero section - triggering greeting');
+              triggerGreeting();
+              observer.disconnect(); // Stop observing after trigger
+            }
+          });
+        }, { threshold: 0, rootMargin: '0px' });
+        
+        observer.observe(heroSection);
+        return true;
+      }
     }
+    return false;
   }
   
-  if (heroSection) {
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        // Hero section is leaving viewport (scrolled past)
-        if (!entry.isIntersecting && entry.boundingClientRect.top < 0) {
-          console.log('📜 Scrolled past hero section - showing Emily greeting');
-          triggerGreeting();
-        }
-      });
-    }, { threshold: 0 });
-    
-    observer.observe(heroSection);
-  }
+  // Try to find and observe hero section
+  setTimeout(() => {
+    findAndObserveHero();
+  }, 500);
+  
+  // Method 4: Time-based fallback (show after 8 seconds if no other trigger)
+  const fallbackTimer = setTimeout(() => {
+    if (!triggered && !greetingDismissed) {
+      console.log('⏰ Fallback timer - triggering greeting');
+      triggerGreeting();
+    }
+  }, 8000);
+  
+  // Clean up fallback timer if greeting triggered by other means
+  const originalTrigger = triggerGreeting;
+  triggerGreeting = function() {
+    clearTimeout(fallbackTimer);
+    originalTrigger();
+  };
 }
 
-// === 4) Main app (same behaviour as your existing script) ===
+// === 4) Main app ===
 document.addEventListener("DOMContentLoaded", () => {
-  // Ensure skeleton exists so the rest never crashes
+  // Ensure skeleton exists
   ensureChatSkeleton();
 
   // Cache DOM refs
@@ -441,7 +576,6 @@ document.addEventListener("DOMContentLoaded", () => {
     ar: { fees: "الرسوم", admissions: "القبول", contact: "التواصل", open: "الأيام المفتوحة", enquire: UI_TEXT.ar.enquire, prospectus: "كتيّب مخصص" },
     ru: { fees: "Стоимость обучения", admissions: "Поступление", contact: "Контакты", open: "Дни открытых дверей", enquire: UI_TEXT.ru.enquire, prospectus: "Индивидуальный проспект" }
   };
-  
 
   function clearButtons(){ buttonGrid.innerHTML = ""; }
   function getTranslatedLabel(k){ return LABELS[currentLanguage]?.[k] || k; }
@@ -493,32 +627,32 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function updateWelcome() {
-  const t = UI_TEXT[currentLanguage] || UI_TEXT.en;
-  
-  // If we have a family_id, fetch personalized welcome
-  if (FAMILY_ID) {
-    fetch("/ask", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ 
-        question: "__WELCOME__",  // Special flag for welcome message
-        language: currentLanguage,
-        family_id: FAMILY_ID
+    const t = UI_TEXT[currentLanguage] || UI_TEXT.en;
+    
+    // If we have a family_id, fetch personalized welcome
+    if (FAMILY_ID) {
+      fetch("/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          question: "__WELCOME__",
+          language: currentLanguage,
+          family_id: FAMILY_ID
+        })
       })
-    })
-    .then(r => r.json())
-    .then(data => {
-      welcomeEl.innerText = data.answer || t.welcome;
-    })
-    .catch(() => {
+      .then(r => r.json())
+      .then(data => {
+        welcomeEl.innerText = data.answer || t.welcome;
+      })
+      .catch(() => {
+        welcomeEl.innerText = t.welcome;
+      });
+    } else {
       welcomeEl.innerText = t.welcome;
-    });
-  } else {
-    welcomeEl.innerText = t.welcome;
+    }
+    
+    input.placeholder = t.placeholder;
   }
-  
-  input.placeholder = t.placeholder;
-}
 
   function renderDynamicButtons(queries = [], queryMap = {}) {
     clearButtons();
@@ -563,7 +697,7 @@ document.addEventListener("DOMContentLoaded", () => {
       body: JSON.stringify({ 
         question: cleanedQ, 
         language: currentLanguage,
-        family_id: FAMILY_ID  // Now includes family_id from localStorage or URL
+        family_id: FAMILY_ID
       })
     })
     .then(r => r.json())
@@ -581,35 +715,35 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // === FIXED: Toggle / close with resize messages ===
+  // Toggle / close with resize messages
   toggleBtn.addEventListener("click", () => {
     chatbox.classList.toggle("open");
     if (chatbox.classList.contains("open")) {
-      // Chat opened - resize iframe to full size
-      sendResizeMessage(400, 600); // Increased height
+      sendResizeMessage(400, 600);
       updateWelcome();
       showInitialButtons();
       input.focus();
     } else {
-      // Chat closed - resize iframe back to small bubble
       sendResizeMessage(64, 64);
     }
   });
   
-  
   closeBtn.addEventListener("click", () => {
     chatbox.classList.remove("open");
-    // Chat closed - resize iframe back to small bubble
     sendResizeMessage(64, 64);
   });
 
   // Send initial resize message on load
   setTimeout(() => {
-    sendResizeMessage(64, 64); // Start with small bubble size
-  }, 1000); // Increased delay to ensure iframe is loaded
+    sendResizeMessage(64, 64);
+  }, 1000);
 
   // Language + send
-  languageSelector.addEventListener("change", () => { currentLanguage = languageSelector.value; updateWelcome(); showInitialButtons(); });
+  languageSelector.addEventListener("change", () => { 
+    currentLanguage = languageSelector.value; 
+    updateWelcome(); 
+    showInitialButtons(); 
+  });
   sendBtn.addEventListener("click", () => sendMessage());
   input.addEventListener("keypress", e => { if (e.key === "Enter") sendMessage(); });
 
@@ -617,10 +751,10 @@ document.addEventListener("DOMContentLoaded", () => {
   updateWelcome();
   showInitialButtons();
 
-  // === NEW: Initialize Emily greeting system ===
+  // === Initialize Emily greeting system ===
   initEmilyGreeting();
 
-  // === 5) (Optional) Load the voice helper file automatically from chatbot service if not present ===
+  // === Load voice helper file ===
   const hasVoice = !!document.querySelector('script[src*="realtime-voice-handsfree.js"]');
   if (!hasVoice) {
     const s = document.createElement("script");
