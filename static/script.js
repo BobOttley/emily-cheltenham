@@ -413,7 +413,7 @@ function initEmilyGreeting() {
     }, 500);
   }
   
-  // Method 1: Video end detection
+  // Method 1: Video detection (multiple strategies)
   const videoSelectors = [
     '#hero-video',
     '.hero-video',
@@ -431,10 +431,43 @@ function initEmilyGreeting() {
       heroVideo = document.querySelector(selector);
       if (heroVideo) {
         console.log('🎥 Found hero video:', selector);
+        
+        // Strategy 1: Video actually ends
         heroVideo.addEventListener('ended', () => {
           console.log('🎬 Hero video ended - triggering greeting');
           triggerGreeting();
         });
+        
+        // Strategy 2: After 5 seconds of playing (whether muted or not)
+        let playTime = 0;
+        heroVideo.addEventListener('timeupdate', () => {
+          if (heroVideo.currentTime >= 5 && playTime === 0) {
+            playTime = heroVideo.currentTime;
+            console.log('🎬 Video played 5+ seconds - triggering greeting');
+            triggerGreeting();
+          }
+        });
+        
+        // Strategy 3: User interaction with video (play/pause)
+        heroVideo.addEventListener('play', () => {
+          setTimeout(() => {
+            if (!triggered) {
+              console.log('🎬 Video interaction detected - triggering greeting');
+              triggerGreeting();
+            }
+          }, 3000);
+        });
+        
+        // Strategy 4: If video exists but is muted/autoplay, trigger after 6 seconds
+        if (heroVideo.autoplay || heroVideo.muted) {
+          setTimeout(() => {
+            if (!triggered) {
+              console.log('🎬 Autoplay/muted video timeout - triggering greeting');
+              triggerGreeting();
+            }
+          }, 6000);
+        }
+        
         return true;
       }
     }
@@ -514,13 +547,13 @@ function initEmilyGreeting() {
     findAndObserveHero();
   }, 500);
   
-  // Method 4: Time-based fallback (show after 8 seconds if no other trigger)
+  // Method 4: Time-based fallback (show after 6 seconds if no other trigger)
   const fallbackTimer = setTimeout(() => {
     if (!triggered && !greetingDismissed) {
       console.log('⏰ Fallback timer - triggering greeting');
       triggerGreeting();
     }
-  }, 8000);
+  }, 6000);
   
   // Clean up fallback timer if greeting triggered by other means
   const originalTrigger = triggerGreeting;
