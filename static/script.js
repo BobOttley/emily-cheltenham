@@ -105,7 +105,7 @@ if (FAMILY_ID) {
   @keyframes penai-dots{0%{content:""}33%{content:"."}66%{content:".."}100%{content:"..."}}
   .voice-indicator.hidden{display:none!important;}
   
-  /* FIXED: Emily greeting bubble with better positioning and animation */
+  /* FIXED: Emily greeting bubble with mobile support */
   #emily-greeting-bubble{
     position:fixed;
     bottom:100px;
@@ -122,6 +122,8 @@ if (FAMILY_ID) {
     transition:opacity .5s ease, transform .5s ease;
     pointer-events:none;
     display:none;
+    -webkit-tap-highlight-color:transparent;
+    cursor:pointer;
   }
   #emily-greeting-bubble.show{
     opacity:1;
@@ -164,10 +166,55 @@ if (FAMILY_ID) {
     border-radius:50%;
     transition:background .2s, color .2s;
     line-height:1;
+    -webkit-tap-highlight-color:transparent;
   }
   #emily-greeting-bubble .close-bubble:hover{
     background:#f0f0f0;
     color:#333;
+  }
+  #emily-greeting-bubble .close-bubble:active{
+    background:#e0e0e0;
+  }
+  
+  /* Mobile optimizations */
+  @media (max-width: 768px) {
+    #emily-greeting-bubble{
+      bottom:90px;
+      right:10px;
+      left:10px;
+      max-width:calc(100% - 20px);
+      margin:0 auto;
+    }
+    #emily-greeting-bubble::after{
+      right:20px;
+    }
+    #penai-chatbox{
+      bottom:80px;
+      right:10px;
+      left:10px;
+      width:calc(100% - 20px);
+      max-width:none;
+    }
+    #penai-toggle{
+      bottom:15px;
+      right:15px;
+      width:56px;
+      height:56px;
+      font-size:26px;
+    }
+  }
+  
+  /* Smaller phones */
+  @media (max-width: 480px) {
+    #emily-greeting-bubble{
+      bottom:80px;
+      font-size:13px;
+      padding:15px 20px 15px 15px;
+    }
+    #emily-greeting-bubble p{
+      font-size:13px;
+      padding-right:18px;
+    }
   }
   `;
   const style = document.createElement("style");
@@ -355,16 +402,20 @@ function initEmilyGreeting() {
     
     fetchGreeting();
     
-    // Small delay for smooth animation
+    // Delay before showing - longer on mobile/tablet for better UX
+    const isMobile = window.innerWidth <= 768;
+    const showDelay = isMobile ? 1500 : 800;
+    
     setTimeout(() => {
       bubble.classList.add("show");
       
-      // Auto-dismiss after 15 seconds
+      // Auto-dismiss after 20 seconds (more time to read on mobile)
+      const dismissDelay = isMobile ? 20000 : 18000;
       greetingTimeout = setTimeout(() => {
         console.log('⏰ Auto-dismissing greeting bubble');
         hideGreeting();
-      }, 15000);
-    }, 100);
+      }, dismissDelay);
+    }, showDelay);
   }
   
   // Hide greeting bubble
@@ -385,16 +436,33 @@ function initEmilyGreeting() {
     }
   }
   
-  // Close button handler
+  // Close button handler (touch + click)
   closeBtn.addEventListener("click", (e) => {
     e.stopPropagation();
+    e.preventDefault();
     hideGreeting();
   });
   
-  // Click bubble to open chat
+  // Touch support for close button
+  closeBtn.addEventListener("touchend", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    hideGreeting();
+  });
+  
+  // Click bubble to open chat (touch + click)
   bubble.addEventListener("click", (e) => {
     if (e.target === closeBtn || e.target.closest(".close-bubble")) return;
     console.log('💬 Bubble clicked - opening chat');
+    hideGreeting();
+    toggleBtn.click();
+  });
+  
+  // Touch support for bubble
+  bubble.addEventListener("touchend", (e) => {
+    if (e.target === closeBtn || e.target.closest(".close-bubble")) return;
+    console.log('💬 Bubble touched - opening chat');
+    e.preventDefault();
     hideGreeting();
     toggleBtn.click();
   });
@@ -407,10 +475,13 @@ function initEmilyGreeting() {
     triggered = true;
     console.log('✨ Greeting trigger activated');
     
-    // Delay slightly to ensure smooth page load
+    // Longer delay for smoother page experience, especially on mobile
+    const isMobile = window.innerWidth <= 768;
+    const triggerDelay = isMobile ? 1200 : 800;
+    
     setTimeout(() => {
       showGreeting();
-    }, 500);
+    }, triggerDelay);
   }
   
   // Method 1: Video detection (multiple strategies)
@@ -455,18 +526,27 @@ function initEmilyGreeting() {
               console.log('🎬 Video interaction detected - triggering greeting');
               triggerGreeting();
             }
-          }, 3000);
+          }, 5000); // Increased from 3s to 5s
         });
         
-        // Strategy 4: If video exists but is muted/autoplay, trigger after 6 seconds
+        // Strategy 4: If video exists but is muted/autoplay, trigger after longer delay
+        // On mobile, autoplay often doesn't work, so this is key
         if (heroVideo.autoplay || heroVideo.muted) {
           setTimeout(() => {
             if (!triggered) {
               console.log('🎬 Autoplay/muted video timeout - triggering greeting');
               triggerGreeting();
             }
-          }, 6000);
+          }, 8000); // Increased from 6s to 8s
         }
+        
+        // Strategy 5: Mobile-specific - if video paused (iOS blocks autoplay), trigger with delay
+        setTimeout(() => {
+          if (heroVideo.paused && !triggered) {
+            console.log('🎬 Video paused (mobile autoplay blocked) - triggering greeting');
+            triggerGreeting();
+          }
+        }, 6000); // Increased from 4s to 6s
         
         return true;
       }
@@ -547,13 +627,16 @@ function initEmilyGreeting() {
     findAndObserveHero();
   }, 500);
   
-  // Method 4: Time-based fallback (show after 6 seconds if no other trigger)
+  // Method 4: Time-based fallback (show after 8-10 seconds if no other trigger)
+  const isMobile = window.innerWidth <= 768;
+  const fallbackDelay = isMobile ? 10000 : 8000; // Longer on mobile
+  
   const fallbackTimer = setTimeout(() => {
     if (!triggered && !greetingDismissed) {
       console.log('⏰ Fallback timer - triggering greeting');
       triggerGreeting();
     }
-  }, 6000);
+  }, fallbackDelay);
   
   // Clean up fallback timer if greeting triggered by other means
   const originalTrigger = triggerGreeting;
@@ -720,9 +803,27 @@ document.addEventListener("DOMContentLoaded", () => {
     const cleanedQ = rawQ.replace(/^Me:|^Moi\s*:|^Ich:|^Yo:|^我：/, '').trim();
 
     input.value = "";
-    thinking.style.display = "block";
+    
+    // Show user message immediately
+    const userPrefix = { en:"Me:", fr:"Moi :", de:"Ich:", es:"Yo:", zh:"我：" }[currentLanguage] || "Me:";
+    const userDiv = document.createElement("div");
+    userDiv.className = "message user";
+    const userP = document.createElement("p");
+    userP.textContent = `${userPrefix} ${cleanedQ}`;
+    userDiv.appendChild(userP);
+    history.appendChild(userDiv);
+    history.scrollTop = history.scrollHeight;
+    
+    // Hide welcome and buttons
     welcomeEl.style.display = "none";
     clearButtons();
+    
+    // Show thinking indicator after a brief pause (so user sees their message first)
+    setTimeout(() => {
+      thinking.style.display = "block";
+    }, 500);
+
+    const startTime = Date.now();
 
     fetch("/ask", {
       method: "POST",
@@ -735,16 +836,57 @@ document.addEventListener("DOMContentLoaded", () => {
     })
     .then(r => r.json())
     .then(data => {
-      thinking.style.display = "none";
-      appendExchange(cleanedQ, data.answer, data.url, data.link_label);
-      if (data.queries && data.queries.length) renderDynamicButtons(data.queries, data.query_map);
-      else showInitialButtons();
+      // Calculate how long the request took
+      const elapsed = Date.now() - startTime;
+      // Ensure minimum 4 seconds between user message and Emily's response
+      const minDelay = 4000;
+      const remainingDelay = Math.max(0, minDelay - elapsed);
+      
+      setTimeout(() => {
+        thinking.style.display = "none";
+        
+        // Show Emily's response
+        const botDiv = document.createElement("div");
+        botDiv.className = "message bot";
+        const botP = document.createElement("p");
+        botP.textContent = data.answer;
+        botDiv.appendChild(botP);
+
+        if (data.url && data.link_label) {
+          const a = document.createElement("a");
+          a.href = data.url; 
+          a.target = "_blank"; 
+          a.className = "chat-link"; 
+          a.textContent = data.link_label;
+          botDiv.appendChild(a);
+        }
+
+        history.appendChild(botDiv);
+        history.scrollTop = history.scrollHeight;
+        
+        if (data.queries && data.queries.length) renderDynamicButtons(data.queries, data.query_map);
+        else showInitialButtons();
+      }, remainingDelay);
     })
     .catch(err => {
-      thinking.style.display = "none";
-      console.error("❌ Fetch error:", err);
-      appendExchange(cleanedQ, "Something went wrong – please try again.");
-      showInitialButtons();
+      const elapsed = Date.now() - startTime;
+      const minDelay = 4000;
+      const remainingDelay = Math.max(0, minDelay - elapsed);
+      
+      setTimeout(() => {
+        thinking.style.display = "none";
+        console.error("❌ Fetch error:", err);
+        
+        const botDiv = document.createElement("div");
+        botDiv.className = "message bot";
+        const botP = document.createElement("p");
+        botP.textContent = "Something went wrong – please try again.";
+        botDiv.appendChild(botP);
+        history.appendChild(botDiv);
+        history.scrollTop = history.scrollHeight;
+        
+        showInitialButtons();
+      }, remainingDelay);
     });
   }
 
