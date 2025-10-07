@@ -366,11 +366,15 @@ function initEmilyGreeting() {
   
   // Fetch personalized greeting from Emily
   function fetchGreeting() {
+    // Start with generic message
+    greetingText.innerHTML = "👋 Hi! I'm <strong>Emily</strong>, your voice-enabled admissions assistant. Click here to start a conversation!";
+    
     if (!FAMILY_ID) {
-      greetingText.innerHTML = "👋 Hi! I'm <strong>Emily</strong>, your voice-enabled admissions assistant. Click here to start a conversation!";
+      // No personalization available, just keep generic message
       return;
     }
     
+    // Fetch personalized greeting
     fetch("/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -383,13 +387,25 @@ function initEmilyGreeting() {
     .then(r => r.json())
     .then(data => {
       if (data.answer) {
-        greetingText.textContent = data.answer;
-      } else {
-        greetingText.innerHTML = "👋 Hi! I'm <strong>Emily</strong>, your voice-enabled admissions assistant. Click here to start a conversation!";
+        // Wait 7 seconds, then change to personalized message
+        setTimeout(() => {
+          greetingText.textContent = data.answer;
+          console.log('🔄 Switched to personalized greeting');
+          
+          // Reset auto-dismiss timer for 10 more seconds
+          if (greetingTimeout) {
+            clearTimeout(greetingTimeout);
+          }
+          greetingTimeout = setTimeout(() => {
+            console.log('⏰ Auto-dismissing after personalized message');
+            hideGreeting();
+          }, 10000);
+        }, 7000);
       }
     })
     .catch(() => {
-      greetingText.innerHTML = "👋 Hi! I'm <strong>Emily</strong>, your voice-enabled admissions assistant. Click here to start a conversation!";
+      // If fetch fails, just keep generic message
+      console.log('Could not fetch personalized greeting');
     });
   }
   
@@ -400,7 +416,7 @@ function initEmilyGreeting() {
     console.log('🎈 Showing Emily greeting bubble');
     greetingShown = true;
     
-    fetchGreeting();
+    fetchGreeting(); // This shows generic first, then switches to personalized
     
     // Delay before showing - longer on mobile/tablet for better UX
     const isMobile = window.innerWidth <= 768;
@@ -409,12 +425,12 @@ function initEmilyGreeting() {
     setTimeout(() => {
       bubble.classList.add("show");
       
-      // Auto-dismiss after 20 seconds (more time to read on mobile)
-      const dismissDelay = isMobile ? 20000 : 18000;
+      // Initial auto-dismiss will be replaced if personalized message loads
+      // This is just a fallback in case no personalization
       greetingTimeout = setTimeout(() => {
-        console.log('⏰ Auto-dismissing greeting bubble');
+        console.log('⏰ Auto-dismissing greeting bubble (fallback)');
         hideGreeting();
-      }, dismissDelay);
+      }, 18000); // 18 seconds fallback
     }, showDelay);
   }
   
@@ -838,8 +854,8 @@ document.addEventListener("DOMContentLoaded", () => {
     .then(data => {
       // Calculate how long the request took
       const elapsed = Date.now() - startTime;
-      // Ensure minimum 4 seconds between user message and Emily's response
-      const minDelay = 4000;
+      // Ensure minimum 7 seconds between user message and Emily's response
+      const minDelay = 7000;
       const remainingDelay = Math.max(0, minDelay - elapsed);
       
       setTimeout(() => {
@@ -864,13 +880,16 @@ document.addEventListener("DOMContentLoaded", () => {
         history.appendChild(botDiv);
         history.scrollTop = history.scrollHeight;
         
-        if (data.queries && data.queries.length) renderDynamicButtons(data.queries, data.query_map);
-        else showInitialButtons();
+        // Wait 10 seconds before showing buttons (so user can read Emily's response)
+        setTimeout(() => {
+          if (data.queries && data.queries.length) renderDynamicButtons(data.queries, data.query_map);
+          else showInitialButtons();
+        }, 10000);
       }, remainingDelay);
     })
     .catch(err => {
       const elapsed = Date.now() - startTime;
-      const minDelay = 4000;
+      const minDelay = 7000;
       const remainingDelay = Math.max(0, minDelay - elapsed);
       
       setTimeout(() => {
@@ -885,7 +904,10 @@ document.addEventListener("DOMContentLoaded", () => {
         history.appendChild(botDiv);
         history.scrollTop = history.scrollHeight;
         
-        showInitialButtons();
+        // Wait 10 seconds before showing buttons
+        setTimeout(() => {
+          showInitialButtons();
+        }, 10000);
       }, remainingDelay);
     });
   }
