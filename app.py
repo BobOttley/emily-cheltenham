@@ -1356,7 +1356,7 @@ def search_knowledge():
     
 @app.route("/realtime/session", methods=["POST"])
 def create_realtime_session():
-    """Create OpenAI Realtime API session for voice WITH STREAMLINED ACCENT INSTRUCTIONS"""
+    """Create OpenAI Realtime API session for voice WITH EMAIL SENDING"""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return jsonify({"error": "OPENAI_API_KEY not set"}), 500
@@ -1382,38 +1382,26 @@ def create_realtime_session():
     user = get_user_info()
     user_name = user.get("displayName", "User") if user else "User"
     
-    model = body.get("model", "gpt-4o-realtime-preview")
+    model = body.get("model", "gpt-4o-realtime-preview-2024-12-17")
     voice = body.get("voice", "shimmer")
     language = body.get("language", "en")
-    
-    # FIXED: Streamlined accent instructions without special characters
-    instructions = f"""You are Emily, virtual assistant for Cheltenham College, a prestigious 177-year-old British independent school.
 
-CRITICAL ACCENT REQUIREMENT:
-Speak in BBC English (Received Pronunciation) at all times. Think Fiona Bruce, Huw Edwards, Sophie Raworth.
-
-PRONUNCIATION RULES:
-1. NON-RHOTIC R: Silent R after vowels (car=cah, father=fah-ther, teacher=tea-cher, water=waw-ter)
-2. BROAD A: Use "ah" sound in bath, class, dance, fast, after, ask, can't, path, staff
-3. CRISP T: Clear T sounds, never softened to D (better=bet-ter NOT bed-der, water=waw-ter NOT waw-der)
-
-BRITISH VOCABULARY ONLY:
-- pupils (NOT students), staff (NOT faculty), timetable (NOT schedule)
-- term (NOT semester), year group (NOT grade), Maths (NOT Math)
-- holidays (NOT vacation), whilst (NOT while), pitch (NOT field)
-- car park (NOT parking lot), mobile (NOT cell phone)
-
+    instructions = f"""You are Emily, the AI assistant for Cheltenham College.
+Be warm, helpful, and professional. Use British spelling and expressions.
+Keep responses concise and conversational.
 Language: {language}
 
-EMAIL INSTRUCTIONS:
-When sending enquiry emails:
-1. Send TO: bob.ottley@bsmart-ai.com
-2. Ask for user's email and contact number first
-3. Include their details in email body
-4. CC the user
-5. Confirm: "I've sent the enquiry to admissions and copied you"
+CRITICAL EMAIL INSTRUCTIONS:
+- When sending emails about tours, admissions, or enquiries:
+  1. ALWAYS send TO: bob.ottley@bsmart-ai.com
+  2. ALWAYS ask the user: "What's your email address and best contact number so I can include them in the enquiry?"
+  3. Wait for their response before sending
+  4. Include their contact details in the email body
+  5. CC the user at their email address
+  6. After sending, confirm: "I've sent the enquiry to our admissions team and copied you at [their-email]"
 
-Use create_mail_draft to send emails immediately (never mention "draft").
+- Use the create_mail_draft function to send emails
+- Never say "draft" - you are SENDING emails immediately
 """
 
     # Add family context to instructions if available
@@ -1504,7 +1492,6 @@ Make EVERY response personal to {child_name}.
                 "model": model,
                 "voice": voice,
                 "instructions": instructions,
-                "temperature": 0.6,
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": {
@@ -1690,7 +1677,7 @@ if __name__ == "__main__":
     is_render = os.getenv("RENDER") == "true"
     
     print(f"🚀 Emily for Cheltenham College starting on port {port}")
-    print(f"🔗 OAuth callback URL: {REDIRECT_URI}")
+    print(f"📍 OAuth callback URL: {REDIRECT_URI}")
     print(f"📋 Scopes: {SCOPE_STR}")
     
     if is_render:
