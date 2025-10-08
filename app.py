@@ -1509,7 +1509,7 @@ Make EVERY response personal to {child_name}.
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": {
                     "model": "whisper-1",
-                    "language": "en-GB"  # FIXED: Added British English setting
+                    "language": "en-GB"
                 },
                 "turn_detection": {
                     "type": "server_vad",
