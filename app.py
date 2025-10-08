@@ -1391,6 +1391,8 @@ Be warm, helpful, and professional. Use British spelling and expressions.
 Keep responses concise and conversational.
 Language: {language}
 
+ACCENT: Speak in BBC Received Pronunciation (British English). Non-rhotic R (car=cah, teacher=tea-cher), broad A sounds (bath=bahth, class=clahss), crisp T sounds (better=bet-ter not bed-der). Use British vocabulary: pupils not students, timetable not schedule, holidays not vacation, whilst not while.
+
 CRITICAL EMAIL INSTRUCTIONS:
 - When sending emails about tours, admissions, or enquiries:
   1. ALWAYS send TO: bob.ottley@bsmart-ai.com
@@ -1494,10 +1496,7 @@ Make EVERY response personal to {child_name}.
                 "instructions": instructions,
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
-                "input_audio_transcription": {
-                    "model": "whisper-1",
-                    "language": "en-GB"
-                },
+                "input_audio_transcription": {"model": "whisper-1"},
                 "turn_detection": {
                     "type": "server_vad",
                     "threshold": 0.5,
