@@ -1382,7 +1382,7 @@ def create_realtime_session():
     user = get_user_info()
     user_name = user.get("displayName", "User") if user else "User"
     
-    model = body.get("model", "gpt-4o-realtime-preview-2024-12-17")
+    model = body.get("model", "gpt-4o-realtime-preview")
     voice = body.get("voice", "shimmer")
     language = body.get("language", "en")
     
@@ -1599,10 +1599,13 @@ Make EVERY response personal to {child_name}.
                 "model": model,
                 "voice": voice,
                 "instructions": instructions,
-                "temperature": 0.6,  # ✅ ADD THIS LINE HERE
+                "temperature": 0.6,
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
-                "input_audio_transcription": {"model": "whisper-1"},
+                "input_audio_transcription": {
+                    "model": "whisper-1",
+                    "language": "en-GB"
+                },
                 "turn_detection": {
                     "type": "server_vad",
                     "threshold": 0.5,
