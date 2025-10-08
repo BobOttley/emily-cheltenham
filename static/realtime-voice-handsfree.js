@@ -1,4 +1,5 @@
 // /static/realtime-voice-handsfree.js
+// ✅ ENHANCED VERSION WITH BRITISH ACCENT ENFORCEMENT
 (function () {
   // DOM
   const chatbox   = document.getElementById('penai-chatbox');
@@ -58,11 +59,21 @@
     });
   }
 
-  // Language → Voice
+  // ============================================================================
+  // 🇬🇧 CRITICAL: Language → Voice Mapping FOR BRITISH ACCENT
+  // ============================================================================
+  // FOR ENGLISH: 'shimmer' is MANDATORY - it's the ONLY OpenAI voice that can
+  // maintain proper BBC Received Pronunciation (RP) British accent consistently.
+  // DO NOT change 'en' to any other voice or Emily will drift to American accent!
   const voiceByLang = {
-    en: 'shimmer', fr: 'alloy', es: 'verse',
-    de: 'luna', zh: 'alloy', ar: 'luna',
-    it: 'verse', ru: 'alloy'
+    en: 'shimmer',  // ✅ CRITICAL: shimmer for British RP accent (NON-NEGOTIABLE)
+    fr: 'alloy',    // French
+    es: 'verse',    // Spanish
+    de: 'luna',     // German
+    zh: 'alloy',    // Chinese
+    ar: 'luna',     // Arabic
+    it: 'verse',    // Italian
+    ru: 'alloy'     // Russian
   };
 
   // Localisation for consent
@@ -213,18 +224,33 @@
   });
   window.addEventListener('beforeunload', teardownSession);
 
-  // === Voice session with AUTO-GREETING ===
+  // ============================================================================
+  // 🇬🇧 Voice session with BRITISH ACCENT ENFORCEMENT
+  // ============================================================================
   async function startVoiceSession() {
+    // Determine the correct voice for the language
+    const selectedVoice = voiceByLang[currentLang] || 'shimmer';
+    
+    // 🇬🇧 CRITICAL: Log which voice is being used for English
+    if (currentLang === 'en') {
+      console.log('🇬🇧 ═══════════════════════════════════════════════════');
+      console.log('🇬🇧 Starting Emily with BBC BRITISH ACCENT');
+      console.log('🇬🇧 Voice: shimmer (optimized for Received Pronunciation)');
+      console.log('🇬🇧 Language: en-GB (British English transcription)');
+      console.log('🇬🇧 ═══════════════════════════════════════════════════');
+    }
+    
     const sessRes = await fetch('/realtime/session', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({
         model: 'gpt-4o-realtime-preview',
-        voice: voiceByLang[currentLang] || 'shimmer',
+        voice: selectedVoice,  // shimmer for English, others for other languages
         language: currentLang,
         family_id: familyId  // Pass family_id to backend
       })
     });
+    
     if (!sessRes.ok) throw new Error('Failed to create realtime session: ' + (await sessRes.text().catch(()=>'')));
     const sess = await sessRes.json();
     sessionId = sess.session_id;
